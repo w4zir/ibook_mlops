@@ -19,7 +19,7 @@ ENV/
 # Environment files (keep examples committed)
 .env
 .env.*
-!.env.local
+.env.local
 !.env.production.example
 
 # Jupyter
