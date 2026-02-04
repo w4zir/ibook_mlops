@@ -52,7 +52,7 @@ services:
       retries: 20
 
   minio-init:
-    image: minio/mc:RELEASE.2025-01-18T07-30-18Z
+    image: minio/mc:latest
     container_name: ibook-minio-init
     depends_on:
       minio:
