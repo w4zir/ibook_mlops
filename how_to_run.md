@@ -1,10 +1,11 @@
-## How to run (Phases 1–3)
+## How to run (Phases 1–4)
 
-This repo currently covers **Phases 1–3**:
+This repo currently covers **Phases 1–4**:
 
 - Phase 1: local service stack + config module + basic unit tests.
 - Phase 2: Feast feature repository + synthetic sample data + feature utilities.
 - Phase 3: MLflow service hardening + fraud model training utilities and notebook.
+- Phase 4: BentoML model serving for fraud detection and dynamic pricing.
 
 ### Prerequisites
 
@@ -74,6 +75,8 @@ make stop
 - **Prometheus**: `http://localhost:9090`
 - **Grafana**: `http://localhost:3000` (default user/pass: `admin` / `admin`)
 - **Jupyter**: `http://localhost:8888` (token disabled in Phase 1 container)
+- **BentoML fraud service**: `http://localhost:7001`
+- **BentoML dynamic pricing service**: `http://localhost:7002`
 
 ---
 
@@ -93,6 +96,18 @@ make test
 
 For Phase 3 specifically, the `tests/unit/test_models.py` suite exercises the
 fraud training utilities and their MLflow integration.
+
+For Phase 4, additional tests cover:
+
+- BentoML shared utilities and runtime helpers: `tests/unit/test_bentoml_common.py`
+- Service-level fraud and pricing logic (without starting HTTP servers):
+  - `tests/integration/test_api_endpoints.py`
+
+You can run just the Phase 4-related tests with:
+
+```bash
+pytest tests/unit/test_bentoml_common.py tests/integration/test_api_endpoints.py -v --tb=short
+```
 
 ---
 
@@ -189,6 +204,73 @@ The notebook will:
   artifacts to MLflow under the `fraud_detection` experiment.
 
 You can inspect the runs in the MLflow UI at `http://localhost:5000`.
+
+---
+
+## Phase 4: Model serving with BentoML
+
+Phase 4 adds:
+
+- A BentoML fraud detection service under `services/bentoml/services/fraud_detection/`.
+- A BentoML dynamic pricing service under `services/bentoml/services/dynamic_pricing/`.
+- Shared BentoML utilities under `services/bentoml/common/` (config, MLflow/Feast clients, Prometheus metrics).
+
+Both services are included in the Docker Compose stack and can also be started via the `Makefile`.
+
+### Start BentoML services with Docker Compose
+
+If you started the full stack with:
+
+```bash
+docker compose up -d --build
+```
+
+then the BentoML services will be built and started alongside the other containers. You should see:
+
+- Fraud service: `ibook-bentoml-fraud` (port `7001`)
+- Dynamic pricing service: `ibook-bentoml-pricing` (port `7002`)
+
+You can also start them explicitly:
+
+```bash
+docker compose up -d bentoml-fraud
+docker compose up -d bentoml-pricing
+```
+
+### Start BentoML services via Makefile
+
+From environments with `make` available:
+
+```bash
+make serve-fraud   # starts fraud detection service on http://localhost:7001
+make serve-pricing # starts dynamic pricing service on http://localhost:7002
+make serve-bento   # starts both services
+```
+
+### Quick smoke tests (curl)
+
+With the stack running, you can hit the health endpoints:
+
+```bash
+curl http://localhost:7001/healthz
+curl http://localhost:7002/healthz
+```
+
+Example fraud prediction request (JSON batch with a single element):
+
+```bash
+curl -X POST http://localhost:7001/predict ^
+  -H "Content-Type: application/json" ^
+  -d "{\"requests\":[{\"user_id\":1,\"event_id\":2,\"amount\":100.0}]}"
+```
+
+Example pricing recommendation request:
+
+```bash
+curl -X POST http://localhost:7002/recommend ^
+  -H "Content-Type: application/json" ^
+  -d "{\"requests\":[{\"event_id\":1,\"current_price\":100.0}]}"
+```
 
 ---
 

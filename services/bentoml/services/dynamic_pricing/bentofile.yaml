@@ -1,0 +1,16 @@
+service: "services.bentoml.services.dynamic_pricing.service:svc"
+
+labels:
+  owner: "ml-platform"
+  project: "ibook-mlops"
+
+include:
+  - "common"
+  - "services"
+
+python:
+  packages:
+    - bentoml
+    - pandas
+    - numpy
+

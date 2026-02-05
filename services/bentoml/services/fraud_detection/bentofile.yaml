@@ -1,0 +1,19 @@
+service: "services.bentoml.services.fraud_detection.service:svc"
+
+labels:
+  owner: "ml-platform"
+  project: "ibook-mlops"
+
+include:
+  - "common"
+  - "services"
+
+python:
+  packages:
+    - bentoml
+    - mlflow
+    - pandas
+    - numpy
+    - scikit-learn
+    - xgboost
+

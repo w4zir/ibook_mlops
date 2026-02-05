@@ -176,6 +176,49 @@ services:
       - ./:/workspace
     working_dir: /workspace
 
+  bentoml-fraud:
+    build:
+      context: .
+      dockerfile: services/bentoml/services/fraud_detection/Dockerfile
+    container_name: ibook-bentoml-fraud
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "7001:7001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7001/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  bentoml-pricing:
+    build:
+      context: .
+      dockerfile: services/bentoml/services/dynamic_pricing/Dockerfile
+    container_name: ibook-bentoml-pricing
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "7002:7002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7002/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
 volumes:
   postgres_data:
   redis_data:

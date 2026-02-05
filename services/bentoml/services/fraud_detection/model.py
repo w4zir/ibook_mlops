@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+"""
+Pydantic models and thin wrappers for the fraud detection BentoML service.
+"""
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+from pydantic import BaseModel, Field
+
+
+class FraudRequest(BaseModel):
+    """
+    Incoming request schema for fraud prediction.
+
+    In the simplest form, callers provide identifiers that can be resolved
+    to features via Feast. Advanced callers may also pass pre-computed
+    feature values in `feature_overrides`.
+    """
+
+    user_id: int = Field(..., description="User identifier.")
+    event_id: int = Field(..., description="Event identifier.")
+    amount: float = Field(..., ge=0, description="Transaction amount.")
+    feature_overrides: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Optional direct feature values overriding Feast lookups.",
+    )
+
+
+class FraudResponse(BaseModel):
+    fraud_score: float = Field(..., ge=0.0, le=1.0, description="Predicted probability of fraud.")
+    is_fraud: bool = Field(..., description="Boolean decision based on configured threshold.")
+
+
+class FraudBatchRequest(BaseModel):
+    requests: List[FraudRequest]
+
+
+class FraudBatchResponse(BaseModel):
+    predictions: List[FraudResponse]
+
+
+@dataclass
+class FraudModelRuntime:
+    """
+    Lightweight runtime wrapper around the underlying ML model.
+
+    The underlying model is expected to expose either `predict_proba(X)[:, 1]`
+    or `predict(X)` returning probabilities.
+    """
+
+    model: Any
+    threshold: float = 0.5
+
+    def predict_scores(self, features: pd.DataFrame) -> np.ndarray:
+        if hasattr(self.model, "predict_proba"):
+            scores = self.model.predict_proba(features.to_numpy())[:, 1]
+        else:
+            # Fallback to `predict` if available; assume it returns probabilities.
+            scores = self.model.predict(features.to_numpy())
+        return np.asarray(scores, dtype=float)
+
+    def predict_batch(self, features: pd.DataFrame) -> List[FraudResponse]:
+        scores = self.predict_scores(features)
+        return [
+            FraudResponse(fraud_score=float(score), is_fraud=bool(score >= self.threshold))
+            for score in scores
+        ]
+
+
+__all__ = [
+    "FraudRequest",
+    "FraudResponse",
+    "FraudBatchRequest",
+    "FraudBatchResponse",
+    "FraudModelRuntime",
+]
+

@@ -1,4 +1,4 @@
-.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod
+.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento
 
 PYTHON ?= python
 
@@ -29,6 +29,16 @@ feast-apply:
 
 test:
 	@$(PYTHON) -m pytest tests/ -v --tb=short
+
+serve-fraud:
+	@echo "Starting BentoML fraud detection service (port 7001)..."
+	@docker compose up -d bentoml-fraud
+
+serve-pricing:
+	@echo "Starting BentoML dynamic pricing service (port 7002)..."
+	@docker compose up -d bentoml-pricing
+
+serve-bento: serve-fraud serve-pricing
 
 clean:
 	@docker compose down -v
