@@ -88,6 +88,11 @@ services:
       MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://${MINIO_BUCKET:-mlflow}/
     ports:
       - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   airflow-webserver:
     image: apache/airflow:2.8.1

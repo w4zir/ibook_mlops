@@ -1,9 +1,10 @@
-## How to run (Phases 1–2)
+## How to run (Phases 1–3)
 
-This repo currently covers **Phase 1–2**:
+This repo currently covers **Phases 1–3**:
 
 - Phase 1: local service stack + config module + basic unit tests.
 - Phase 2: Feast feature repository + synthetic sample data + feature utilities.
+- Phase 3: MLflow service hardening + fraud model training utilities and notebook.
 
 ### Prerequisites
 
@@ -90,6 +91,9 @@ make stop
 make test
 ```
 
+For Phase 3 specifically, the `tests/unit/test_models.py` suite exercises the
+fraud training utilities and their MLflow integration.
+
 ---
 
 ## Phase 2: Feature store & sample data
@@ -147,6 +151,44 @@ features = ["event_realtime_metrics:current_inventory"]
 df = fetch_online_features(features=features, entity_rows=rows)
 print(df)
 ```
+
+---
+
+## Phase 3: MLflow & fraud model training
+
+Phase 3 adds:
+- A hardened MLflow service container with a `/healthz` endpoint.
+- Training utilities in `common/model_utils.py` (Optuna + XGBoost + SHAP + MLflow).
+- A runnable notebook `notebooks/03_model_training_fraud.ipynb`.
+
+### Ensure MLflow is running
+
+From the repo root:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+You should see `ibook-mlflow` healthy (the container healthcheck hits `/healthz`
+on port `5001`), and the UI available at:
+
+- **MLflow UI**: `http://localhost:5000`
+
+### Run the fraud training notebook
+
+1. Start the Jupyter container (already part of `docker compose up`).
+2. Open `http://localhost:8888` in your browser.
+3. In the Jupyter file browser, open `notebooks/03_model_training_fraud.ipynb`.
+4. Run the cells top‑to‑bottom.
+
+The notebook will:
+- Generate a small synthetic dataset (reusing `scripts/seed-data.py`).
+- Build a training DataFrame via `build_fraud_training_dataframe`.
+- Call `train_fraud_model`, which logs parameters, metrics, model, and SHAP
+  artifacts to MLflow under the `fraud_detection` experiment.
+
+You can inspect the runs in the MLflow UI at `http://localhost:5000`.
 
 ---
 
