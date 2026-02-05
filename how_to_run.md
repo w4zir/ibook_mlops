@@ -1,11 +1,12 @@
-## How to run (Phases 1–4)
+## How to run (Phases 1–5)
 
-This repo currently covers **Phases 1–4**:
+This repo currently covers **Phases 1–5**:
 
 - Phase 1: local service stack + config module + basic unit tests.
 - Phase 2: Feast feature repository + synthetic sample data + feature utilities.
 - Phase 3: MLflow service hardening + fraud model training utilities and notebook.
 - Phase 4: BentoML model serving for fraud detection and dynamic pricing.
+- Phase 5: Airflow orchestration DAGs for feature engineering, training, and monitoring.
 
 ### Prerequisites
 
@@ -107,6 +108,16 @@ You can run just the Phase 4-related tests with:
 
 ```bash
 pytest tests/unit/test_bentoml_common.py tests/integration/test_api_endpoints.py -v --tb=short
+```
+
+For Phase 5, additional tests cover:
+
+- Airflow DAG importability and basic topology: `tests/unit/test_airflow_dags.py`
+
+You can run just the Phase 5-related tests with:
+
+```bash
+pytest tests/unit/test_airflow_dags.py -v --tb=short
 ```
 
 ---
@@ -283,4 +294,69 @@ curl -X POST http://localhost:7002/recommend ^
 docker compose down -v
 docker compose up -d --build
 ```
+
+---
+
+## Phase 5: Airflow workflows
+
+Phase 5 adds three orchestration DAGs under `services/airflow/dags/`:
+
+- `feature_engineering_pipeline.py`
+- `model_training_pipeline.py`
+- `ml_monitoring_pipeline.py`
+
+These DAGs are mounted into the official `apache/airflow:2.8.1` containers via
+Docker volumes and are safe to run locally with the existing stack.
+
+### View and run DAGs in the Airflow UI
+
+With the stack running:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Open the Airflow UI:
+
+- **Airflow**: `http://localhost:8080` (user/pass: `admin` / `admin`)
+
+In the UI:
+
+1. Locate the DAGs named:
+   - `feature_engineering_pipeline`
+   - `model_training_pipeline`
+   - `ml_monitoring_pipeline`
+2. Unpause each DAG.
+3. Trigger a manual run for smoke testing (e.g., via the \"Play\" button).
+
+### What the Phase 5 DAGs do (locally)
+
+- **Feature engineering DAG (`feature_engineering_pipeline`)**:
+  - Optionally reads the synthetic Feast Parquet data under `data/processed/feast/`
+    if you have already run `scripts/seed-data.py`.
+  - Computes a small aggregate file `data/processed/feast/event_aggregates.parquet`.
+  - Performs basic data checks (standing in for Great Expectations).
+  - Touches the Feast repo via a lightweight healthcheck.
+  - Logs whether it would trigger training when drift is detected.
+
+- **Model training DAG (`model_training_pipeline`)**:
+  - Builds a small synthetic user-metrics DataFrame in memory.
+  - Uses `common/model_utils.py` to construct a fraud training dataset and run a
+    short XGBoost + Optuna training loop that logs to MLflow.
+  - Compares metrics to simple static baselines and logs whether the candidate
+    model would be accepted.
+  - Includes stub tasks that represent MLflow model registration, canary deploy,
+    and final promotion decisions.
+
+- **Monitoring DAG (`ml_monitoring_pipeline`)**:
+  - Generates synthetic predictions and labels to mimic production behavior.
+  - Writes a small JSON summary under `data/monitoring/daily_drift_summary.json`.
+  - Applies a simple drift threshold and logs whether alerts/retraining would
+    be triggered.
+  - Contains stub tasks for alerting (Slack/PagerDuty) and retraining triggers.
+
+All external integrations (Kafka, Evidently, Slack/PagerDuty, GCS) are stubbed
+out so that the DAGs are fast and reliable in local development.
+
 

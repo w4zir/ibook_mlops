@@ -108,6 +108,9 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: admin
     ports:
       - "8080:8080"
+    volumes:
+      - ./services/airflow/dags:/opt/airflow/dags:ro
+      - ./services/airflow/plugins:/opt/airflow/plugins:ro
     command: >
       bash -c "
       airflow db migrate &&
@@ -124,6 +127,9 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-ibook}:${POSTGRES_PASSWORD:-ibook}@postgres:5432/${POSTGRES_AIRFLOW_DB:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./services/airflow/dags:/opt/airflow/dags:ro
+      - ./services/airflow/plugins:/opt/airflow/plugins:ro
     command: ["bash", "-c", "airflow scheduler"]
 
   zookeeper:
