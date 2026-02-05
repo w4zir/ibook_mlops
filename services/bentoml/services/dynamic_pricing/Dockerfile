@@ -2,6 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /workspace
 
+# Install build deps so packages like shap can compile C extensions (then remove to keep image small)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt requirements.txt
 COPY requirements-dev.txt requirements-dev.txt
 COPY . /workspace
