@@ -24,9 +24,9 @@ def test_entities_and_feature_views_exist(minimal_local_env):
 
 
 def test_local_feature_views_use_filesource(minimal_local_env):
-    # In local mode, we should be using FileSource-backed batch sources.
-    assert isinstance(event_realtime_metrics.batch_source, FileSource)
-    assert isinstance(event_historical_metrics.batch_source, FileSource)
-    assert isinstance(user_purchase_behavior.batch_source, FileSource)
+    # In local mode, we should be using FileSource-backed sources.
+    assert isinstance(event_realtime_metrics.source, FileSource)
+    assert isinstance(event_historical_metrics.source, FileSource)
+    assert isinstance(user_purchase_behavior.source, FileSource)
 
 

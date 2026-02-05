@@ -1,5 +1,6 @@
 project: ibook_mlops
-registry: data/processed/feast/registry.db
+registry: ../../../data/processed/feast/registry.db
+entity_key_serialization_version: 2
 provider: local
 
 online_store:
@@ -8,5 +9,4 @@ online_store:
 
 offline_store:
   type: duckdb
-  path: data/processed/feast_offline.duckdb
 

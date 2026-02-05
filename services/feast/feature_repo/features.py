@@ -34,7 +34,7 @@ event_realtime_metrics = FeatureView(
         Field(name="concurrent_viewers", dtype=Int64),
     ],
     online=True,
-    batch_source=_event_source,
+    source=_event_source,
 )
 
 
@@ -48,7 +48,7 @@ event_historical_metrics = FeatureView(
         Field(name="promoter_success_rate", dtype=Float32),
     ],
     online=True,
-    batch_source=_event_source,
+    source=_event_source,
 )
 
 
@@ -62,8 +62,15 @@ user_purchase_behavior = FeatureView(
         Field(name="preferred_category", dtype=String),
     ],
     online=True,
-    batch_source=_user_source,
+    source=_user_source,
 )
+
+
+# Backward compatibility: newer Feast stores the datasource on `batch_source`
+# while older code/tests expect `.source`.
+for _fv in (event_realtime_metrics, event_historical_metrics, user_purchase_behavior):
+    if not hasattr(_fv, "source"):
+        _fv.source = _fv.batch_source
 
 
 __all__ = [
