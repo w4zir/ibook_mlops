@@ -15,7 +15,7 @@ package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["common*", "tests*", "services*"]
+include = ["common*", "tests*", "services*", "simulator*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

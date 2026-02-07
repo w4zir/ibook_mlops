@@ -7,7 +7,8 @@ Production-grade MLOps platform for Ibook (ticketing) designed to run locally vi
 - Local project skeleton + dependency manifests
 - Local orchestration via `docker-compose.yml` (Postgres, Redis, MinIO, MLflow, Airflow, Kafka, Prometheus, Grafana, Jupyter)
 - Environment configuration module in `common/config.py`
-- A small unit test suite for config loading/validation
+- Unit, integration, and simulation test suites
+- Event ticketing simulator for production-like scenarios (normal traffic, flash sale, fraud attack, drift, degradation, Black Friday)
 
 ### Quick start
 
@@ -15,4 +16,16 @@ Production-grade MLOps platform for Ibook (ticketing) designed to run locally vi
   - Windows PowerShell commands (no `make` required)
   - Makefile usage (WSL/Git Bash/Linux/macOS)
   - Service URLs, testing, and troubleshooting
+
+### Testing
+
+- Unit and integration: `make test` or `python -m pytest tests/ -v`
+- Simulator scenarios (offline): `make sim-list`, `make sim-run scenario=normal-traffic`, `make sim-run-all`
+- Load tests (Locust): `locust -f tests/e2e/test_load_performance.py --host http://localhost:7001` (start BentoML services first)
+
+Ensure `requirements.txt` and `requirements-dev.txt` are installed (e.g. `pip install -r requirements.txt -r requirements-dev.txt` and `pip install -e .`). If pytest fails during plugin load (e.g. third-party pytest plugins), use a clean virtual environment with only project dependencies.
+
+### Simulator
+
+The simulator (`simulator/`) generates realistic ticketing traffic and runs scenarios; when the API is unavailable it uses synthetic responses so tests run offline. Scenarios: `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`. Reports go to `reports/`. See `SIMULATOR.md` for design.
 

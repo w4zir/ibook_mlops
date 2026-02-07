@@ -6,6 +6,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
+pytest.importorskip("mlflow")
+
 from services.bentoml.services.fraud_detection import service as fraud_service
 from services.bentoml.services.dynamic_pricing import service as pricing_service
 

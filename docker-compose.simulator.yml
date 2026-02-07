@@ -1,0 +1,24 @@
+# Simulator services - run with main stack:
+#   docker compose -f docker-compose.yml -f docker-compose.simulator.yml up -d
+# Then: docker compose -f docker-compose.yml -f docker-compose.simulator.yml run --rm simulator python -m simulator.cli run normal-traffic -o /app/reports/out.html
+name: ibook-mlops
+
+services:
+  simulator:
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    container_name: ibook-simulator
+    environment:
+      ENVIRONMENT: local
+      API_BASE_URL: http://bentoml-fraud:7001
+    volumes:
+      - ./simulator:/app/simulator
+      - ./reports:/app/reports
+    # Optional: depend on fraud service when running against live API
+    # depends_on:
+    #   bentoml-fraud:
+    #     condition: service_healthy
+    command: ["tail", "-f", "/dev/null"]
+    networks:
+      - default

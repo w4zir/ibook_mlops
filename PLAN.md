@@ -615,7 +615,7 @@ Use pytest-docker-compose plugin.
 ```
 
 **Files to Create:**
-- [ ] `tests/integration/test_end_to_end_pipeline.py`
+- [x] `tests/integration/test_end_to_end_pipeline.py`
 - [x] `tests/integration/test_api_endpoints.py`
 
 #### 7.3 Load Testing
@@ -632,7 +632,7 @@ Include various payload sizes and traffic patterns.
 ```
 
 **Files to Create:**
-- [ ] `tests/e2e/test_load_performance.py`
+- [x] `tests/e2e/test_load_performance.py`
 
 ---
 
@@ -807,6 +807,14 @@ Create operational runbooks for:
 - [ ] `docs/runbooks/incident-response.md`
 - [ ] `docs/runbooks/scaling.md`
 - [ ] `docs/runbooks/disaster-recovery.md`
+
+#### 10.3 Simulator Setup (Days 36-40)
+
+- [x] Simulator configuration and core generators (event, user, transaction, fraud)
+- [x] Scenarios: normal traffic, flash sale, fraud attack, gradual drift, system degradation, Black Friday
+- [x] Validators (latency, accuracy, drift, business) and report generator
+- [x] CLI (`list-scenarios`, `run`, `run-all`) and `docker-compose.simulator.yml`
+- [x] Simulation tests in `tests/simulation/`
 
 ---
 

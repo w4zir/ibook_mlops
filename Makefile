@@ -1,4 +1,4 @@
-.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento
+.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento sim-list sim-run sim-run-all sim-stop
 
 PYTHON ?= python
 
@@ -50,4 +50,17 @@ format:
 deploy-prod:
 	@echo "Phase 1: production deployment comes later (see scripts/deploy-production.sh in Phase 8)."
 	@exit 0
+
+# Simulator commands (run from project root after: pip install -e .)
+sim-list:
+	@$(PYTHON) -m simulator.cli list-scenarios
+
+sim-run:
+	@$(PYTHON) -m simulator.cli run $(scenario) -o reports/$(scenario)-report.html
+
+sim-run-all:
+	@$(PYTHON) -m simulator.cli run-all -o reports/
+
+sim-stop:
+	@echo "Simulator runs in-process; use Ctrl+C to stop."
 
