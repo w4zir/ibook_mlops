@@ -1,28 +1,40 @@
-## How to run (Phases 1–6)
+## How to run
 
-This repo currently covers **Phases 1–6**:
+This repo covers the full MLOps platform: local service stack, Feast feature store, MLflow, BentoML model serving, Airflow DAGs, monitoring (Prometheus/Grafana/Evidently), and the **event ticketing simulator** for stress and scenario testing.
 
-- Phase 1: local service stack + config module + basic unit tests.
-- Phase 2: Feast feature repository + synthetic sample data + feature utilities.
-- Phase 3: MLflow service hardening + fraud model training utilities and notebook.
-- Phase 4: BentoML model serving for fraud detection and dynamic pricing.
-- Phase 5: Airflow orchestration DAGs for feature engineering, training, and monitoring.
-- Phase 6: Monitoring & observability (Prometheus alert rules, Grafana MLOps dashboard, Evidently-based monitoring utilities).
+---
+
+### Quick Start (TL;DR)
+
+From repo root (PowerShell):
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+.venv\Scripts\pip install -e .
+docker compose up -d --build
+```
+
+Then open: **Airflow** http://localhost:8080 (admin/admin), **MLflow** http://localhost:5000, **Grafana** http://localhost:3000 (admin/admin).  
+Optional: `make seed-data` then `make feast-apply` for Feast data; run simulator with `make sim-list` and `make sim-run scenario=normal-traffic`.
+
+---
 
 ### Prerequisites
 
 - **Docker Desktop** (with Compose)
-- **Python** 3.10+ (this repo was tested with Python 3.12)
+- **Python** 3.10+ (tested with Python 3.12)
 - **Git**
 
-Optional:
-- **WSL / Git Bash** if you want to use the provided `Makefile`
+Optional: **WSL / Git Bash** if you want to use the provided `Makefile`.
 
 ---
 
-## One-time setup (PowerShell)
+### One-time setup
 
-From repo root (`d:\\ai_ws\\projects\\ibook_ai_ops`):
+From repo root:
+
+**PowerShell:**
 
 ```bash
 python -m venv .venv
@@ -31,393 +43,231 @@ python -m venv .venv
 .venv\Scripts\pip install -e .
 ```
 
+**Make (WSL / Git Bash / Linux / macOS):**
+
+```bash
+make setup
+```
+
 Notes:
-- `.env` holds local defaults (safe for dev). Update values if ports or credentials conflict on your machine.
+
+- `.env` holds local defaults (PostgreSQL, Redis, MinIO, MLflow, Airflow, Feast). Update values if ports or credentials conflict on your machine.
 
 ---
 
-## Start the local stack
+### Start the local stack
 
-### PowerShell (recommended on Windows)
+**PowerShell:**
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-Stop:
+**Make:**
 
 ```bash
-docker compose down
+make start
+make logs   # follow logs
+make stop  # stop all services
 ```
 
-Clean (also removes volumes):
+Stop and remove volumes:
 
 ```bash
 docker compose down -v
 ```
 
-### Make (WSL / Git Bash / Linux / macOS)
+---
+
+### Service URLs (defaults)
+
+| Service | URL | Notes |
+|--------|-----|--------|
+| **MLflow** | http://localhost:5000 | Experiment tracking & model registry |
+| **MLflow health** | http://localhost:5001/healthz | Health check (container) |
+| **Airflow** | http://localhost:8080 | User: `admin` / Pass: `admin` |
+| **MinIO API** | http://localhost:9000 | S3-compatible storage |
+| **MinIO console** | http://localhost:9001 | User: `minioadmin` / Pass: `minioadmin` |
+| **Prometheus** | http://localhost:9090 | Metrics & alerts |
+| **Grafana** | http://localhost:3000 | User: `admin` / Pass: `admin` |
+| **Jupyter** | http://localhost:8888 | Token disabled in dev container |
+| **BentoML fraud** | http://localhost:7001 | Fraud detection API |
+| **BentoML pricing** | http://localhost:7002 | Dynamic pricing API |
+| **PostgreSQL** | localhost:5432 | Airflow + MLflow metadata (user: `ibook`) |
+| **Redis** | localhost:6379 | Feast online store |
+| **Kafka** | localhost:9092 | Event streaming (DAGs use stubs locally) |
+| **Zookeeper** | localhost:2181 | Kafka coordination |
+
+---
+
+### Simulator
+
+The **event ticketing simulator** generates realistic traffic (events, users, transactions, fraud patterns) to stress-test the platform under scenarios such as normal traffic, flash sales, fraud attacks, gradual drift, system degradation, and Black Friday.
+
+**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`.
+
+#### Run via CLI (from repo root, with venv active)
 
 ```bash
-make setup
-make start
-make logs
-make stop
+# List scenarios
+python -m simulator.cli list-scenarios
+
+# Run one scenario (output HTML report)
+python -m simulator.cli run normal-traffic -o reports/normal-traffic-report.html
+python -m simulator.cli run flash-sale -o reports/flash-sale-report.html
+
+# Dry run (setup only, no traffic)
+python -m simulator.cli run normal-traffic --dry-run
+
+# Run all scenarios
+python -m simulator.cli run-all -o reports/
+```
+
+#### Run via Make
+
+Requires `pip install -e .` and `make` (e.g. WSL / Git Bash):
+
+```bash
+make sim-list
+make sim-run scenario=normal-traffic   # writes reports/normal-traffic-report.html
+make sim-run scenario=flash-sale
+make sim-run-all                       # runs all, output to reports/
+```
+
+#### Run via Docker Compose
+
+Start the main stack and the simulator overlay, then run the simulator in a one-off container:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.simulator.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.simulator.yml run --rm simulator python -m simulator.cli run normal-traffic -o /app/reports/out.html
+```
+
+Reports are written to the `reports/` directory (or `/app/reports/` inside the container; the compose file mounts `./reports` there).
+
+To run against the live fraud API, ensure `bentoml-fraud` is up and set `API_BASE_URL` (e.g. in the simulator service env: `http://bentoml-fraud:7001`). The simulator can also run offline with synthetic responses.
+
+---
+
+### Feature store and sample data
+
+1. **Generate synthetic Feast data:**
+
+   ```bash
+   # PowerShell
+   .venv\Scripts\python scripts/seed-data.py
+   # Make
+   make seed-data
+   ```
+
+   Creates `data/processed/feast/event_metrics.parquet` and `user_metrics.parquet`.
+
+2. **Apply Feast feature repo:**
+
+   ```bash
+   feast -c services/feast/feature_repo apply
+   # or
+   make feast-apply
+   ```
+
+3. **Fetch online features** (with Redis and stack running):
+
+   ```python
+   from common.feature_utils import fetch_online_features
+   rows = [{"event_id": 1}]
+   features = ["event_realtime_metrics:current_inventory"]
+   df = fetch_online_features(features=features, entity_rows=rows)
+   ```
+
+---
+
+### MLflow and fraud model training
+
+1. Start the stack (`docker compose up -d`). MLflow UI: http://localhost:5000.
+2. Open Jupyter at http://localhost:8888 and run `notebooks/03_model_training_fraud.ipynb` top to bottom. The notebook builds a fraud training dataset, runs XGBoost + Optuna training, and logs runs and artifacts to MLflow.
+
+---
+
+### Model serving (BentoML)
+
+Fraud and pricing services start with the stack. To start only BentoML:
+
+```bash
+make serve-fraud    # http://localhost:7001
+make serve-pricing  # http://localhost:7002
+make serve-bento   # both
+```
+
+**Health checks:**
+
+```bash
+curl -X POST http://localhost:7001/healthz
+curl -X POST http://localhost:7002/healthz
+```
+
+**Example requests (PowerShell):**
+
+```bash
+curl -X POST http://localhost:7001/predict -H "Content-Type: application/json" -d "{\"requests\":[{\"user_id\":1,\"event_id\":2,\"amount\":100.0}]}"
+curl -X POST http://localhost:7002/recommend -H "Content-Type: application/json" -d "{\"requests\":[{\"event_id\":1,\"current_price\":100.0}]}"
 ```
 
 ---
 
-## Service URLs (defaults)
+### Airflow workflows
 
-- **MLflow**: `http://localhost:5000`
-- **Airflow**: `http://localhost:8080` (default user/pass: `admin` / `admin`)
-- **MinIO API**: `http://localhost:9000`
-- **MinIO console**: `http://localhost:9001` (default user/pass: `minioadmin` / `minioadmin`)
-- **Prometheus**: `http://localhost:9090`
-- **Grafana**: `http://localhost:3000` (default user/pass: `admin` / `admin`)
-- **Jupyter**: `http://localhost:8888` (token disabled in Phase 1 container)
-- **BentoML fraud service**: `http://localhost:7001`
-- **BentoML dynamic pricing service**: `http://localhost:7002`
+With the stack running, open http://localhost:8080 (admin/admin). Three DAGs are under `services/airflow/dags/`:
+
+- **feature_engineering_pipeline** — hourly: aggregate features, validate, materialize to Feast, check drift.
+- **model_training_pipeline** — weekly: build dataset, train XGBoost, evaluate, register in MLflow, canary/promotion stubs.
+- **ml_monitoring_pipeline** — daily: collect metrics, compute drift, check thresholds, alert/retrain stubs.
+
+Unpause each DAG and trigger a run from the UI. Kafka/Evidently/Slack integrations are stubbed for local use.
 
 ---
 
-## Run tests (no Docker required)
+### Monitoring (Prometheus & Grafana)
 
-### PowerShell
+- **Prometheus:** http://localhost:9090 — metrics and alert rules (Alerts / Status → Rules).
+- **Grafana:** http://localhost:3000 — open **Dashboards** → **MLOps Overview** (provisioned from `services/monitoring/grafana/dashboards/`).
+
+BentoML services expose `/metrics`; Prometheus scrapes them. See **Observability.md** for full observability and “how to observe” guides.
+
+---
+
+### Run tests
+
+No Docker required; use the project venv.
+
+**PowerShell:**
 
 ```bash
 .venv\Scripts\python -m pytest tests\ -v --tb=short
 ```
 
-### Make
+**Make:**
 
 ```bash
 make test
 ```
 
-For Phase 3 specifically, the `tests/unit/test_models.py` suite exercises the
-fraud training utilities and their MLflow integration.
-
-For Phase 4, additional tests cover:
-
-- BentoML shared utilities and runtime helpers: `tests/unit/test_bentoml_common.py`
-- Service-level fraud and pricing logic (without starting HTTP servers):
-  - `tests/integration/test_api_endpoints.py`
-
-You can run just the Phase 4-related tests with:
+Notable test modules: `tests/unit/test_models.py` (fraud training + MLflow), `tests/unit/test_bentoml_common.py`, `tests/integration/test_api_endpoints.py`, `tests/unit/test_airflow_dags.py`, `tests/unit/test_monitoring_utils.py`. Run a subset, e.g.:
 
 ```bash
-pytest tests/unit/test_bentoml_common.py tests/integration/test_api_endpoints.py -v --tb=short
-```
-
-For Phase 5, additional tests cover:
-
-- Airflow DAG importability and basic topology: `tests/unit/test_airflow_dags.py`
-
-You can run just the Phase 5-related tests with:
-
-```bash
-pytest tests/unit/test_airflow_dags.py -v --tb=short
-```
-
-For Phase 6, monitoring utilities are covered by:
-
-- `tests/unit/test_monitoring_utils.py`
-
-Run Phase 6-related tests with:
-
-```bash
-pytest tests/unit/test_monitoring_utils.py -v --tb=short
+pytest tests/unit/test_airflow_dags.py tests/unit/test_monitoring_utils.py -v --tb=short
 ```
 
 ---
 
-## Phase 2: Feature store & sample data
+### Troubleshooting
 
-Phase 2 adds:
-- A Feast feature repo in `services/feast/feature_repo/`.
-- Synthetic Parquet datasets under `data/processed/feast/` via `scripts/seed-data.py`.
-- Convenience helpers in `common/feature_utils.py`.
+- **Ports in use:** Stop conflicting services or change ports in `docker-compose.yml` / `.env`.
+- **Full reset:**
 
-### Generate synthetic data
+  ```bash
+  docker compose down -v
+  docker compose up -d --build
+  ```
 
-From the repo root:
-
-#### PowerShell
-
-```bash
-.venv\Scripts\python scripts\seed-data.py
-```
-
-#### Make (WSL / Git Bash / Linux / macOS)
-
-```bash
-make seed-data
-```
-
-This will create:
-- `data/processed/feast/event_metrics.parquet`
-- `data/processed/feast/user_metrics.parquet`
-
-### Apply the Feast feature repo (local)
-
-After generating data, apply the Feast definitions so the registry is created:
-
-```bash
-feast -c services/feast/feature_repo apply
-```
-
-If you prefer using `make`:
-
-```bash
-make feast-apply
-```
-
-### Example: fetch online features (Python)
-
-Once Redis and the local stack are running (`docker compose up -d`), you can
-experiment with online features from a Python REPL or notebook:
-
-```python
-from common.feature_utils import fetch_online_features
-
-rows = [{"event_id": 1}]
-features = ["event_realtime_metrics:current_inventory"]
-
-df = fetch_online_features(features=features, entity_rows=rows)
-print(df)
-```
-
----
-
-## Phase 3: MLflow & fraud model training
-
-Phase 3 adds:
-- A hardened MLflow service container with a `/healthz` endpoint.
-- Training utilities in `common/model_utils.py` (Optuna + XGBoost + SHAP + MLflow).
-- A runnable notebook `notebooks/03_model_training_fraud.ipynb`.
-
-### Ensure MLflow is running
-
-From the repo root:
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-You should see `ibook-mlflow` healthy (the container healthcheck hits `/healthz`
-on port `5001`), and the UI available at:
-
-- **MLflow UI**: `http://localhost:5000`
-
-### Run the fraud training notebook
-
-1. Start the Jupyter container (already part of `docker compose up`).
-2. Open `http://localhost:8888` in your browser.
-3. In the Jupyter file browser, open `notebooks/03_model_training_fraud.ipynb`.
-4. Run the cells top‑to‑bottom.
-
-The notebook will:
-- Generate a small synthetic dataset (reusing `scripts/seed-data.py`).
-- Build a training DataFrame via `build_fraud_training_dataframe`.
-- Call `train_fraud_model`, which logs parameters, metrics, model, and SHAP
-  artifacts to MLflow under the `fraud_detection` experiment.
-
-You can inspect the runs in the MLflow UI at `http://localhost:5000`.
-
----
-
-## Phase 4: Model serving with BentoML
-
-Phase 4 adds:
-
-- A BentoML fraud detection service under `services/bentoml/services/fraud_detection/`.
-- A BentoML dynamic pricing service under `services/bentoml/services/dynamic_pricing/`.
-- Shared BentoML utilities under `services/bentoml/common/` (config, MLflow/Feast clients, Prometheus metrics).
-
-Both services are included in the Docker Compose stack and can also be started via the `Makefile`.
-
-### Start BentoML services with Docker Compose
-
-If you started the full stack with:
-
-```bash
-docker compose up -d --build
-```
-
-then the BentoML services will be built and started alongside the other containers. You should see:
-
-- Fraud service: `ibook-bentoml-fraud` (port `7001`)
-- Dynamic pricing service: `ibook-bentoml-pricing` (port `7002`)
-
-You can also start them explicitly:
-
-```bash
-docker compose up -d bentoml-fraud
-docker compose up -d bentoml-pricing
-```
-
-### Start BentoML services via Makefile
-
-From environments with `make` available:
-
-```bash
-make serve-fraud   # starts fraud detection service on http://localhost:7001
-make serve-pricing # starts dynamic pricing service on http://localhost:7002
-make serve-bento   # starts both services
-```
-
-### Quick smoke tests (curl)
-
-With the stack running, you can hit the health endpoints:
-
-```bash
-curl http://localhost:7001/healthz
-curl http://localhost:7002/healthz
-```
-
-Example fraud prediction request (JSON batch with a single element):
-
-```bash
-curl -X POST http://localhost:7001/predict ^
-  -H "Content-Type: application/json" ^
-  -d "{\"requests\":[{\"user_id\":1,\"event_id\":2,\"amount\":100.0}]}"
-```
-
-Example pricing recommendation request:
-
-```bash
-curl -X POST http://localhost:7002/recommend ^
-  -H "Content-Type: application/json" ^
-  -d "{\"requests\":[{\"event_id\":1,\"current_price\":100.0}]}"
-```
-
----
-
-## Troubleshooting
-
-- **Ports already in use**: stop conflicting local services or change the exposed ports in `docker-compose.yml`.
-- **Reset everything**:
-
-```bash
-docker compose down -v
-docker compose up -d --build
-```
-
----
-
-## Phase 5: Airflow workflows
-
-Phase 5 adds three orchestration DAGs under `services/airflow/dags/`:
-
-- `feature_engineering_pipeline.py`
-- `model_training_pipeline.py`
-- `ml_monitoring_pipeline.py`
-
-These DAGs are mounted into the official `apache/airflow:2.8.1` containers via
-Docker volumes and are safe to run locally with the existing stack.
-
-### View and run DAGs in the Airflow UI
-
-With the stack running:
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-Open the Airflow UI:
-
-- **Airflow**: `http://localhost:8080` (user/pass: `admin` / `admin`)
-
-In the UI:
-
-1. Locate the DAGs named:
-   - `feature_engineering_pipeline`
-   - `model_training_pipeline`
-   - `ml_monitoring_pipeline`
-2. Unpause each DAG.
-3. Trigger a manual run for smoke testing (e.g., via the \"Play\" button).
-
-### What the Phase 5 DAGs do (locally)
-
-- **Feature engineering DAG (`feature_engineering_pipeline`)**:
-  - Optionally reads the synthetic Feast Parquet data under `data/processed/feast/`
-    if you have already run `scripts/seed-data.py`.
-  - Computes a small aggregate file `data/processed/feast/event_aggregates.parquet`.
-  - Performs basic data checks (standing in for Great Expectations).
-  - Touches the Feast repo via a lightweight healthcheck.
-  - Logs whether it would trigger training when drift is detected.
-
-- **Model training DAG (`model_training_pipeline`)**:
-  - Builds a small synthetic user-metrics DataFrame in memory.
-  - Uses `common/model_utils.py` to construct a fraud training dataset and run a
-    short XGBoost + Optuna training loop that logs to MLflow.
-  - Compares metrics to simple static baselines and logs whether the candidate
-    model would be accepted.
-  - Includes stub tasks that represent MLflow model registration, canary deploy,
-    and final promotion decisions.
-
-- **Monitoring DAG (`ml_monitoring_pipeline`)**:
-  - Generates synthetic predictions and labels to mimic production behavior.
-  - Writes a small JSON summary under `data/monitoring/daily_drift_summary.json`.
-  - Applies a simple drift threshold and logs whether alerts/retraining would
-    be triggered.
-  - Contains stub tasks for alerting (Slack/PagerDuty) and retraining triggers.
-
-All external integrations (Kafka, Evidently, Slack/PagerDuty, GCS) are stubbed
-out so that the DAGs are fast and reliable in local development.
-
----
-
-## Phase 6: Monitoring & Observability
-
-Phase 6 adds:
-
-- **Prometheus alert rules** in `services/monitoring/prometheus/alert_rules.yml`
-  (model latency, error rate, feature freshness, data drift).
-- **Grafana MLOps dashboard** at `services/monitoring/grafana/dashboards/mlops-overview.json`,
-  with panels for model serving latency, request/error rates, and placeholders for
-  feature store, Airflow, business metrics, and drift scores.
-- **Monitoring utilities** in `common/monitoring_utils.py`: Evidently-based drift
-  reports, performance comparison, HTML export, Prometheus metric extraction,
-  and alert threshold checks (with a fallback when Evidently is not available).
-
-### View Prometheus and Grafana
-
-With the stack running (`docker compose up -d`):
-
-- **Prometheus**: `http://localhost:9090` — query metrics and view configured alerts
-  under **Alerts** or **Status → Rules**.
-- **Grafana**: `http://localhost:3000` (default user/pass: `admin` / `admin`).
-  Open **Dashboards** and select **MLOps Overview** (provisioned from
-  `services/monitoring/grafana/dashboards/`).
-
-Prometheus scrapes BentoML services (fraud and pricing) when they are running;
-the dashboard shows latency and error rate once traffic is present.
-
-### Using the monitoring utilities (Python)
-
-From a notebook or script (with the project installed, e.g. `pip install -e .`):
-
-```python
-import pandas as pd
-from common.monitoring_utils import (
-    generate_drift_report,
-    extract_prometheus_metrics,
-    check_alert_thresholds,
-    save_report_html,
-)
-
-ref = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
-cur = pd.DataFrame({"x": [1.1, 2.2, 2.9]})
-result = generate_drift_report(ref, cur, include_html=True)
-print(result.drift_score, result.drift_detected)
-metrics = extract_prometheus_metrics(result)
-if check_alert_thresholds(result, drift_threshold=0.3):
-    print("Alert: drift above threshold")
-save_report_html(result, "data/monitoring/drift_report.html")
-```
-
+For more detail on architecture, algorithms, and observability, see **how_it_works.md** and **Observability.md**.
