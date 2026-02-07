@@ -1,0 +1,47 @@
+groups:
+  - name: mlops_alerts
+    interval: 30s
+    rules:
+      - alert: ModelLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(bentoml_request_latency_seconds_bucket[5m])) by (le, service, endpoint)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model serving p99 latency above 200ms"
+          description: "Service {{ $labels.service }} endpoint {{ $labels.endpoint }} has p99 latency {{ $value | humanizeDuration }} (threshold 200ms)."
+
+      - alert: ErrorRateHigh
+        expr: |
+          (
+            sum(rate(bentoml_request_errors_total[5m])) by (service)
+            /
+            sum(rate(bentoml_requests_total[5m])) by (service)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model serving error rate above 1%"
+          description: "Service {{ $labels.service }} error rate is {{ $value | humanizePercentage }} (threshold 1%)."
+
+      - alert: FeatureFreshnessStale
+        expr: feast_feature_freshness_seconds > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feature store data older than 5 minutes"
+          description: "Feature freshness is {{ $value }}s (threshold 300s)."
+
+      - alert: DataDriftDetected
+        expr: ml_data_drift_score > 0.3
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Data drift detected for production model"
+          description: "Drift score {{ $value }} exceeds threshold 0.3. Consider retraining."

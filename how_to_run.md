@@ -1,12 +1,13 @@
-## How to run (Phases 1–5)
+## How to run (Phases 1–6)
 
-This repo currently covers **Phases 1–5**:
+This repo currently covers **Phases 1–6**:
 
 - Phase 1: local service stack + config module + basic unit tests.
 - Phase 2: Feast feature repository + synthetic sample data + feature utilities.
 - Phase 3: MLflow service hardening + fraud model training utilities and notebook.
 - Phase 4: BentoML model serving for fraud detection and dynamic pricing.
 - Phase 5: Airflow orchestration DAGs for feature engineering, training, and monitoring.
+- Phase 6: Monitoring & observability (Prometheus alert rules, Grafana MLOps dashboard, Evidently-based monitoring utilities).
 
 ### Prerequisites
 
@@ -118,6 +119,16 @@ You can run just the Phase 5-related tests with:
 
 ```bash
 pytest tests/unit/test_airflow_dags.py -v --tb=short
+```
+
+For Phase 6, monitoring utilities are covered by:
+
+- `tests/unit/test_monitoring_utils.py`
+
+Run Phase 6-related tests with:
+
+```bash
+pytest tests/unit/test_monitoring_utils.py -v --tb=short
 ```
 
 ---
@@ -359,4 +370,54 @@ In the UI:
 All external integrations (Kafka, Evidently, Slack/PagerDuty, GCS) are stubbed
 out so that the DAGs are fast and reliable in local development.
 
+---
+
+## Phase 6: Monitoring & Observability
+
+Phase 6 adds:
+
+- **Prometheus alert rules** in `services/monitoring/prometheus/alert_rules.yml`
+  (model latency, error rate, feature freshness, data drift).
+- **Grafana MLOps dashboard** at `services/monitoring/grafana/dashboards/mlops-overview.json`,
+  with panels for model serving latency, request/error rates, and placeholders for
+  feature store, Airflow, business metrics, and drift scores.
+- **Monitoring utilities** in `common/monitoring_utils.py`: Evidently-based drift
+  reports, performance comparison, HTML export, Prometheus metric extraction,
+  and alert threshold checks (with a fallback when Evidently is not available).
+
+### View Prometheus and Grafana
+
+With the stack running (`docker compose up -d`):
+
+- **Prometheus**: `http://localhost:9090` — query metrics and view configured alerts
+  under **Alerts** or **Status → Rules**.
+- **Grafana**: `http://localhost:3000` (default user/pass: `admin` / `admin`).
+  Open **Dashboards** and select **MLOps Overview** (provisioned from
+  `services/monitoring/grafana/dashboards/`).
+
+Prometheus scrapes BentoML services (fraud and pricing) when they are running;
+the dashboard shows latency and error rate once traffic is present.
+
+### Using the monitoring utilities (Python)
+
+From a notebook or script (with the project installed, e.g. `pip install -e .`):
+
+```python
+import pandas as pd
+from common.monitoring_utils import (
+    generate_drift_report,
+    extract_prometheus_metrics,
+    check_alert_thresholds,
+    save_report_html,
+)
+
+ref = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
+cur = pd.DataFrame({"x": [1.1, 2.2, 2.9]})
+result = generate_drift_report(ref, cur, include_html=True)
+print(result.drift_score, result.drift_detected)
+metrics = extract_prometheus_metrics(result)
+if check_alert_thresholds(result, drift_threshold=0.3):
+    print("Alert: drift above threshold")
+save_report_html(result, "data/monitoring/drift_report.html")
+```
 
