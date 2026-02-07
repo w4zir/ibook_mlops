@@ -31,7 +31,7 @@ python -m venv .venv
 ```
 
 Notes:
-- `.env.local` is committed with safe local defaults. Update values if ports or credentials conflict on your machine.
+- `.env` holds local defaults (safe for dev). Update values if ports or credentials conflict on your machine.
 
 ---
 

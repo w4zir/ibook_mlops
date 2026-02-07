@@ -1,0 +1,34 @@
+# Local multipart shim shadows python-multipart in containers; use pip package only.
+multipart/
+
+# Git and env
+.git
+.gitignore
+.env
+.env.*
+
+# Virtualenvs
+.venv
+venv
+ENV
+
+# Python caches
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+coverage.xml
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+*.log
+
+# Data and large artifacts (optional; uncomment if build context is large)
+# data/raw/*
+# data/processed/*
+# data/models/*

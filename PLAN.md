@@ -29,7 +29,7 @@ ibook-mlops/
 │   └── workflows/
 │       └── mlops-cicd.yml
 ├── docker-compose.yml
-├── .env.local
+├── .env
 ├── .env.production
 ├── .gitignore
 ├── Makefile
@@ -243,7 +243,7 @@ Include health checks, volume mounts, and proper networking.
 
 **Files to Create:**
 - [ ] `docker-compose.yml`
-- [ ] `.env.local` (local environment variables)
+- [ ] `.env` (local environment variables)
 - [ ] `scripts/init-db.sql` (database initialization)
 
 #### 1.3 Environment Configuration
@@ -261,7 +261,7 @@ Create a Python configuration module (common/config.py) that:
 **Files to Create:**
 - [ ] `common/__init__.py`
 - [ ] `common/config.py`
-- [ ] `.env.local` (with all local configuration)
+- [ ] `.env` (with all local configuration)
 - [ ] `.env.production.example` (template for production)
 
 #### 1.4 Makefile for Common Commands
@@ -992,7 +992,7 @@ make clean && make start
 **Issue:** Feast can't connect to Redis
 ```bash
 # Solution
-# Check Redis password in .env.local
+# Check Redis password in .env
 docker logs ibook-redis
 docker exec -it ibook-redis redis-cli ping
 ```

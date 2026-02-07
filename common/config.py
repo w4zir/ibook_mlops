@@ -103,17 +103,17 @@ def _load_env(env_file: Optional[str]) -> None:
         return
 
     # When running from subdirectories (e.g. notebooks/), search upwards for
-    # a project-level `.env.local` so notebooks and scripts pick up the same
+    # a project-level `.env` so notebooks and scripts pick up the same
     # config as the repo root.
     cwd = Path.cwd()
     for base in (cwd, *cwd.parents):
-        candidate = base / ".env.local"
+        candidate = base / ".env"
         if candidate.exists():
             load_dotenv(candidate, override=False)
             return
 
-    # Fallback to the original behaviour (local `.env.local` if present).
-    load_dotenv(".env.local", override=False)
+    # Fallback to the original behaviour (local `.env` if present).
+    load_dotenv(".env", override=False)
 
 
 def _from_env(prefix: str, key: str, default: Optional[str] = None) -> Optional[str]:

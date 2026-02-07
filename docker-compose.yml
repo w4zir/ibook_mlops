@@ -52,7 +52,7 @@ services:
       retries: 20
 
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-05-21T01-59-54Z-cpuv1
     container_name: ibook-minio-init
     depends_on:
       minio:
@@ -60,15 +60,22 @@ services:
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      # Always use Docker service name; .env may set localhost for host-side access
+      MINIO_ENDPOINT: http://minio:9000
       MINIO_BUCKET: ${MINIO_BUCKET:-mlflow}
     entrypoint:
       - sh
       - -c
       - |
-        mc alias set local "$${MINIO_ENDPOINT}" "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" && \
-        mc mb --ignore-existing "local/$${MINIO_BUCKET}" && \
-        exit 0
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if mc alias set local "$${MINIO_ENDPOINT}" "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" 2>/dev/null; then
+            mc mb --ignore-existing "local/$${MINIO_BUCKET}" && exit 0
+          fi
+          echo "Waiting for MinIO API... attempt $$i/10"
+          sleep 2
+        done
+        echo "MinIO init failed: could not connect"
+        exit 1
 
   mlflow:
     build:
@@ -83,7 +90,8 @@ services:
     environment:
       AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT:-http://minio:9000}
+      # Use Docker service name so MLflow in container can reach MinIO
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER:-ibook}:${POSTGRES_PASSWORD:-ibook}@postgres:5432/${POSTGRES_MLFLOW_DB:-mlflow}
       MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://${MINIO_BUCKET:-mlflow}/
     ports:
@@ -200,7 +208,19 @@ services:
     ports:
       - "7001:7001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7001/healthz"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-sf",
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          "{}",
+          "http://localhost:7001/health",
+        ]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -220,7 +240,19 @@ services:
     ports:
       - "7002:7002"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7002/healthz"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-sf",
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          "{}",
+          "http://localhost:7002/health",
+        ]
       interval: 10s
       timeout: 5s
       retries: 12
