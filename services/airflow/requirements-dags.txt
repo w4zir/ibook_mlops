@@ -1,0 +1,26 @@
+# Dependencies for Airflow DAGs (common.model_utils, common.feature_utils, common.config).
+# Omit apache-airflow; use the base image's Airflow version.
+# Install with: pip install -r requirements-dags.txt (from project root: -r services/airflow/requirements-dags.txt)
+
+mlflow==2.10.2
+feast[redis,duckdb]==0.40.0
+
+# Data Processing (required by model_utils and DAGs)
+pandas==2.1.4
+numpy==1.26.3
+scikit-learn==1.4.0
+xgboost==2.0.3
+duckdb>=0.10.0
+pyarrow==15.0.0
+shap==0.43.0
+
+# Monitoring
+evidently>=0.5.0
+prometheus-client==0.19.0
+
+# Utilities
+pydantic==2.5.3
+python-dotenv==1.0.0
+redis>=4.2.2,<5
+psycopg2-binary==2.9.9
+optuna==3.6.1

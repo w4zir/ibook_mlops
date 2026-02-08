@@ -225,6 +225,8 @@ With the stack running, open http://localhost:8080 (admin/admin). Three DAGs are
 
 Unpause each DAG and trigger a run from the UI. Kafka/Evidently/Slack integrations are stubbed for local use.
 
+**Note:** The project root is mounted into the Airflow containers as `/opt/airflow/workspace` and `PYTHONPATH` is set to that path so the DAGs can import the `common` package (e.g. `common.feature_utils`, `common.model_utils`). DAGs resolve `data/` paths from the workspace, so parquet files under `data/processed/feast/` and `data/monitoring/` are used when present. Task retries are configurable via env: `AIRFLOW_TASK_RETRIES` (default 3) and per-DAG overrides `FEATURE_ENGINEERING_PIPELINE_RETRIES`, `MODEL_TRAINING_PIPELINE_RETRIES`, `ML_MONITORING_PIPELINE_RETRIES` (set to 0 to fail immediately). See `.env.example`.
+
 ---
 
 ### Monitoring (Prometheus & Grafana)

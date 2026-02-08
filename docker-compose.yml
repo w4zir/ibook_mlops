@@ -103,7 +103,10 @@ services:
       retries: 12
 
   airflow-webserver:
-    image: apache/airflow:2.8.1
+    build:
+      context: .
+      dockerfile: services/airflow/Dockerfile
+    image: ibook-airflow:latest
     container_name: ibook-airflow-webserver
     depends_on:
       postgres:
@@ -112,6 +115,12 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-ibook}:${POSTGRES_PASSWORD:-ibook}@postgres:5432/${POSTGRES_AIRFLOW_DB:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-airflow-webserver-secret-key}
+      PYTHONPATH: /opt/airflow/workspace
+      AIRFLOW_TASK_RETRIES: "${AIRFLOW_TASK_RETRIES:-3}"
+      FEATURE_ENGINEERING_PIPELINE_RETRIES: "${FEATURE_ENGINEERING_PIPELINE_RETRIES:-}"
+      MODEL_TRAINING_PIPELINE_RETRIES: "${MODEL_TRAINING_PIPELINE_RETRIES:-}"
+      ML_MONITORING_PIPELINE_RETRIES: "${ML_MONITORING_PIPELINE_RETRIES:-}"
       _AIRFLOW_WWW_USER_USERNAME: admin
       _AIRFLOW_WWW_USER_PASSWORD: admin
     ports:
@@ -119,6 +128,7 @@ services:
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags:ro
       - ./services/airflow/plugins:/opt/airflow/plugins:ro
+      - .:/opt/airflow/workspace:ro
     command: >
       bash -c "
       airflow db migrate &&
@@ -126,18 +136,31 @@ services:
       airflow webserver"
 
   airflow-scheduler:
-    image: apache/airflow:2.8.1
+    image: ibook-airflow:latest
     container_name: ibook-airflow-scheduler
     depends_on:
       airflow-webserver:
         condition: service_started
+      mlflow:
+        condition: service_healthy
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-ibook}:${POSTGRES_PASSWORD:-ibook}@postgres:5432/${POSTGRES_AIRFLOW_DB:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-airflow-webserver-secret-key}
+      PYTHONPATH: /opt/airflow/workspace
+      AIRFLOW_TASK_RETRIES: "${AIRFLOW_TASK_RETRIES:-3}"
+      FEATURE_ENGINEERING_PIPELINE_RETRIES: "${FEATURE_ENGINEERING_PIPELINE_RETRIES:-}"
+      MODEL_TRAINING_PIPELINE_RETRIES: "${MODEL_TRAINING_PIPELINE_RETRIES:-}"
+      ML_MONITORING_PIPELINE_RETRIES: "${ML_MONITORING_PIPELINE_RETRIES:-}"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags:ro
       - ./services/airflow/plugins:/opt/airflow/plugins:ro
+      - .:/opt/airflow/workspace:ro
     command: ["bash", "-c", "airflow scheduler"]
 
   zookeeper:

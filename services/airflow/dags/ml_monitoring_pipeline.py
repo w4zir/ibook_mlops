@@ -22,9 +22,16 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+try:
+    from .utils import get_retries_for_dag, get_workspace_data_path
+except ImportError:
+    from utils import get_retries_for_dag, get_workspace_data_path
+
 
 DAG_ID = "ml_monitoring_pipeline"
-MONITORING_DIR = Path("data") / "monitoring"
+MONITORING_DIR = get_workspace_data_path("monitoring")
+# When workspace is mounted read-only (e.g. Docker), write to this path instead.
+MONITORING_DIR_FALLBACK = Path("/opt/airflow/data/monitoring")
 
 
 def _collect_production_metrics(**_: Any) -> Dict[str, float]:
@@ -74,14 +81,28 @@ def _compute_drift_reports(**context: Any) -> Dict[str, float]:
     mean_label = float(metrics.get("mean_label", 0.0))
     drift_score = abs(mean_pred - mean_label)
 
-    MONITORING_DIR.mkdir(parents=True, exist_ok=True)
     report = {
         "mean_prediction": mean_pred,
         "mean_label": mean_label,
         "drift_score": drift_score,
     }
-    out_path = MONITORING_DIR / "daily_drift_summary.json"
-    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    out_dir = MONITORING_DIR
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "daily_drift_summary.json"
+        out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except OSError as e:
+        # Workspace is often mounted read-only in Docker; write to writable path.
+        out_dir = MONITORING_DIR_FALLBACK
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "daily_drift_summary.json"
+        out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        logging.warning(
+            "Could not write to %s (%s); wrote to fallback %s",
+            MONITORING_DIR,
+            e,
+            out_path,
+        )
     logging.info("Wrote synthetic drift summary to %s", out_path)
 
     return report
@@ -149,7 +170,7 @@ def _trigger_retraining(**context: Any) -> None:
 
 default_args = {
     "owner": "ml-platform",
-    "retries": 1,
+    "retries": get_retries_for_dag(DAG_ID, 1),
     "retry_delay": timedelta(minutes=5),
 }
 

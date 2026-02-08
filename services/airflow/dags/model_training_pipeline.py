@@ -28,6 +28,11 @@ from airflow.operators.python import PythonOperator
 
 from common.model_utils import TrainingResult, build_fraud_training_dataframe, train_fraud_model
 
+try:
+    from .utils import get_retries_for_dag
+except ImportError:
+    from utils import get_retries_for_dag
+
 
 DAG_ID = "model_training_pipeline"
 
@@ -183,7 +188,7 @@ def _finalize_promotion(**context: Any) -> None:
 
 default_args = {
     "owner": "ml-platform",
-    "retries": 1,
+    "retries": get_retries_for_dag(DAG_ID, 1),
     "retry_delay": timedelta(minutes=10),
 }
 
