@@ -72,9 +72,16 @@ class BaseScenario(ABC):
             }
         return validation_results
 
-    def execute(self) -> Dict[str, Any]:
-        """Execute full scenario lifecycle."""
-        logger.info("Starting scenario: %s", self.name)
+    def get_effective_duration_minutes(self) -> int:
+        """Return effective duration (override if set, else default)."""
+        return getattr(self, "_effective_duration_minutes", None) or self.duration_minutes
+
+    def execute(self, duration_override_minutes: int | None = None) -> Dict[str, Any]:
+        """Execute full scenario lifecycle. Optionally override duration (minutes)."""
+        self._effective_duration_minutes = (
+            duration_override_minutes if duration_override_minutes is not None else self.duration_minutes
+        )
+        logger.info("Starting scenario: %s (duration=%s min)", self.name, self.get_effective_duration_minutes())
         self.start_time = datetime.now()
         try:
             self.setup()

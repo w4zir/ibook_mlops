@@ -29,11 +29,14 @@ def _synthetic_response(transaction: Dict[str, Any]) -> Dict[str, Any]:
 class NormalTrafficScenario(BaseScenario):
     """Simulate typical daily operations - 100-500 RPS, ~3% fraud."""
 
-    def __init__(self) -> None:
+    DEFAULT_DURATION_MINUTES = 5
+
+    def __init__(self, duration_minutes: int | None = None) -> None:
+        mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="Normal Traffic",
             description="Simulate typical daily operations with baseline load",
-            duration_minutes=5,
+            duration_minutes=mins,
             expected_metrics={
                 "peak_rps": 300,
                 "p99_latency_ms": 200,
@@ -54,8 +57,11 @@ class NormalTrafficScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Generating normal traffic...")
+        effective = self.get_effective_duration_minutes()
+        scale = effective / self.DEFAULT_DURATION_MINUTES
+        count = max(100, int(1500 * scale))
         transactions = self.txn_gen.generate_batch(
-            self.events, self.users, count=1500, time_range_hours=1
+            self.events, self.users, count=count, time_range_hours=max(1, int(scale))
         )
         responses = [_synthetic_response(t) for t in transactions]
         for i, t in enumerate(transactions):

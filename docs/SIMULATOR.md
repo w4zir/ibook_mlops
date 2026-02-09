@@ -1513,19 +1513,29 @@ Add to **Phase 10** in existing PLAN.md:
 
 ---
 
+## Duration configuration and mix/realtime modes
+
+- **Duration override:** Use `--duration N` (minutes) with `run` or `run-all` to scale scenario workload (e.g. `python -m simulator.cli run normal-traffic --duration 10`).
+- **Mix mode:** Run a weighted combination of scenarios for a set duration: `python -m simulator.cli mix --duration 30 --scenarios "normal-traffic:40,flash-sale:20,fraud-attack:20,system-degradation:10,black-friday:10"`. See `simulator/scenarios/mixed.py` (MixedScenario).
+- **Realtime runner:** Stream traffic at a fixed RPS for wall-clock seconds: `python -m simulator.cli realtime normal-traffic --duration 60 --rps 100`. See `simulator/runners/realtime_runner.py`; supports graceful Ctrl+C.
+
+For detailed testing steps, expected results, and tool usage, see **[docs/simulator_testing.md](simulator_testing.md)**.
+
+---
+
 ## 🎯 Usage Examples
 
 ### Run Single Scenario
 
 ```bash
-# Start simulator
-make sim-start
-
 # List available scenarios
 make sim-list
 
 # Run flash sale scenario
 make sim-run scenario=flash-sale
+
+# Run with custom duration (minutes)
+python -m simulator.cli run flash-sale --duration 10 -o reports/flash-sale-report.html
 
 # View report
 open reports/flash-sale-report.html
@@ -1541,14 +1551,25 @@ make sim-run-all
 make sim-dashboard
 ```
 
+### Mix and realtime
+
+```bash
+# Mix mode (weighted scenarios, 30 min default)
+make sim-mix
+make sim-mix duration=15
+python -m simulator.cli mix --duration 30 -o reports/mix-report.html
+
+# Realtime (wall-clock seconds, configurable RPS)
+make sim-realtime
+make sim-realtime scenario=normal-traffic duration=120 rps=200
+python -m simulator.cli realtime normal-traffic --duration 60 --rps 100 -o reports/realtime-report.html
+```
+
 ### Custom Scenario Execution
 
 ```bash
-# SSH into simulator container
-docker exec -it ibook-simulator bash
-
-# Run with custom parameters
-python -m simulator.cli run flash-sale --duration 30 --users 200000
+# Run with custom duration (minutes)
+python -m simulator.cli run flash-sale --duration 30 -o reports/flash-sale-report.html
 
 # Dry run (setup only)
 python -m simulator.cli run flash-sale --dry-run

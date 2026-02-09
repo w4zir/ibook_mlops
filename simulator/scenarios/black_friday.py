@@ -29,11 +29,14 @@ def _synthetic_response(transaction: Dict[str, Any]) -> Dict[str, Any]:
 class BlackFridayScenario(BaseScenario):
     """Extreme sustained load - Black Friday style traffic."""
 
-    def __init__(self) -> None:
+    DEFAULT_DURATION_MINUTES = 10
+
+    def __init__(self, duration_minutes: int | None = None) -> None:
+        mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="Black Friday",
             description="Extreme sustained load scenario",
-            duration_minutes=10,
+            duration_minutes=mins,
             expected_metrics={
                 "peak_rps": 5000,
                 "p99_latency_ms": 200,
@@ -54,8 +57,11 @@ class BlackFridayScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Generating Black Friday traffic...")
+        effective = self.get_effective_duration_minutes()
+        scale = effective / self.DEFAULT_DURATION_MINUTES
+        count = max(500, int(3000 * scale))
         transactions = self.txn_gen.generate_batch(
-            self.events, self.users, count=3000, time_range_hours=2
+            self.events, self.users, count=count, time_range_hours=max(1, int(2 * scale))
         )
         responses = [_synthetic_response(t) for t in transactions]
         for i, t in enumerate(transactions):

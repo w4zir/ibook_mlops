@@ -105,7 +105,7 @@ docker compose down -v
 
 The **event ticketing simulator** generates realistic traffic (events, users, transactions, fraud patterns) to stress-test the platform under scenarios such as normal traffic, flash sales, fraud attacks, gradual drift, system degradation, and Black Friday.
 
-**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`.
+**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`.
 
 #### Run via CLI (from repo root, with venv active)
 
@@ -117,11 +117,20 @@ python -m simulator.cli list-scenarios
 python -m simulator.cli run normal-traffic -o reports/normal-traffic-report.html
 python -m simulator.cli run flash-sale -o reports/flash-sale-report.html
 
+# Optional: override duration (minutes)
+python -m simulator.cli run normal-traffic --duration 10 -o reports/normal-10min.html
+
 # Dry run (setup only, no traffic)
 python -m simulator.cli run normal-traffic --dry-run
 
 # Run all scenarios
 python -m simulator.cli run-all -o reports/
+
+# Mix mode: weighted scenarios for N minutes
+python -m simulator.cli mix --duration 30 --scenarios "normal-traffic:40,flash-sale:20,fraud-attack:20,system-degradation:10,black-friday:10" -o reports/mix-report.html
+
+# Realtime: stream at fixed RPS for wall-clock seconds
+python -m simulator.cli realtime normal-traffic --duration 60 --rps 100 -o reports/realtime-report.html
 ```
 
 #### Run via Make
@@ -133,6 +142,8 @@ make sim-list
 make sim-run scenario=normal-traffic   # writes reports/normal-traffic-report.html
 make sim-run scenario=flash-sale
 make sim-run-all                       # runs all, output to reports/
+make sim-mix                           # mix mode (default 30 min); use duration=10 for 10 min
+make sim-realtime                      # realtime 60s @ 100 rps; use scenario= duration= rps= to override
 ```
 
 #### Run via Docker Compose

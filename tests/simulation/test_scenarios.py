@@ -13,6 +13,7 @@ from simulator.scenarios.black_friday import BlackFridayScenario
 from simulator.scenarios.flash_sale import FlashSaleScenario
 from simulator.scenarios.fraud_attack import FraudAttackScenario
 from simulator.scenarios.gradual_drift import GradualDriftScenario
+from simulator.scenarios.mixed import MixedScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
 from simulator.scenarios.system_degradation import SystemDegradationScenario
 
@@ -101,3 +102,48 @@ def test_normal_traffic_execute_completes() -> None:
     result = scenario.execute()
     assert "passed" in result
     assert "duration_seconds" in scenario.results or "peak_rps" in scenario.results
+
+
+def test_scenario_duration_override() -> None:
+    """Execute with duration_override_minutes scales workload."""
+    scenario = NormalTrafficScenario()
+    result = scenario.execute(duration_override_minutes=2)
+    assert "passed" in result
+    assert scenario.get_effective_duration_minutes() == 2
+    assert "duration_seconds" in scenario.results
+    assert "responses" in scenario.results
+    assert len(scenario.results["responses"]) >= 50
+
+
+def test_mixed_scenario_setup_runs_without_error() -> None:
+    scenario = MixedScenario(
+        scenario_weights={"normal-traffic": 0.5, "flash-sale": 0.5},
+        duration_minutes=2,
+    )
+    scenario.setup()
+    assert len(scenario._scenario_instances) >= 1
+    assert scenario.results is not None or hasattr(scenario, "_scenario_instances")
+
+
+def test_mixed_scenario_execute_completes() -> None:
+    scenario = MixedScenario(
+        scenario_weights={"normal-traffic": 1.0},
+        duration_minutes=1,
+    )
+    result = scenario.execute(duration_override_minutes=1)
+    assert "passed" in result
+    assert "duration_seconds" in scenario.results or "peak_rps" in scenario.results
+    assert "responses" in scenario.results
+    assert len(scenario.results["responses"]) >= 1
+
+
+def test_mixed_scenario_custom_weights() -> None:
+    scenario = MixedScenario(
+        scenario_weights={"normal-traffic": 70, "fraud-attack": 30},
+        duration_minutes=1,
+    )
+    scenario.setup()
+    assert "normal-traffic" in scenario._scenario_instances
+    assert "fraud-attack" in scenario._scenario_instances
+    scenario.run()
+    assert len(scenario.results.get("responses", [])) >= 1

@@ -1,4 +1,4 @@
-.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento sim-list sim-run sim-run-all sim-stop
+.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento sim-list sim-run sim-run-all sim-mix sim-realtime sim-stop
 
 PYTHON ?= python
 
@@ -60,6 +60,12 @@ sim-run:
 
 sim-run-all:
 	@$(PYTHON) -m simulator.cli run-all -o reports/
+
+sim-mix:
+	@$(PYTHON) -m simulator.cli mix --duration $(if $(duration),$(duration),30) -o reports/mix-report.html
+
+sim-realtime:
+	@$(PYTHON) -m simulator.cli realtime $(if $(scenario),$(scenario),normal-traffic) --duration $(if $(duration),$(duration),60) --rps $(if $(rps),$(rps),100) -o reports/realtime-report.html
 
 sim-stop:
 	@echo "Simulator runs in-process; use Ctrl+C to stop."

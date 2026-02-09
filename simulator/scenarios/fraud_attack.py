@@ -30,11 +30,14 @@ def _synthetic_fraud_response(transaction: Dict[str, Any]) -> Dict[str, Any]:
 class FraudAttackScenario(BaseScenario):
     """Coordinated fraud attack - validates fraud detection recall and precision."""
 
-    def __init__(self) -> None:
+    DEFAULT_DURATION_MINUTES = 5
+
+    def __init__(self, duration_minutes: int | None = None) -> None:
+        mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="Fraud Attack",
             description="Coordinated fraud attack - credential stuffing, card testing, bot scalping",
-            duration_minutes=5,
+            duration_minutes=mins,
             expected_metrics={
                 "fraud_recall": 0.90,
                 "fraud_precision": 0.85,
@@ -63,8 +66,11 @@ class FraudAttackScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Generating fraud attack traffic...")
+        effective = self.get_effective_duration_minutes()
+        scale = effective / self.DEFAULT_DURATION_MINUTES
+        duration_seconds = max(5, int(30 * scale))
         attack_txns = self.fraud_sim.generate_mixed_attack(
-            self.event, self.users, duration_seconds=30, attacks_per_second=5
+            self.event, self.users, duration_seconds=duration_seconds, attacks_per_second=5
         )
         num_attacks = len(attack_txns)
         self.results["fraud_attacks_count"] = num_attacks

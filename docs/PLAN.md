@@ -815,6 +815,10 @@ Create operational runbooks for:
 - [x] Validators (latency, accuracy, drift, business) and report generator
 - [x] CLI (`list-scenarios`, `run`, `run-all`) and `docker-compose.simulator.yml`
 - [x] Simulation tests in `tests/simulation/`
+- [x] Configurable duration (`--duration`) for run/run-all and scenario workload scaling
+- [x] Mix mode (MixedScenario) with configurable scenario weights and duration
+- [x] Realtime runner for wall-clock RPS-based streaming with live progress and graceful stop
+- [x] Testing documentation in `docs/simulator_testing.md`
 
 ---
 

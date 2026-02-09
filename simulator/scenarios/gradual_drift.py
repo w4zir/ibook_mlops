@@ -17,11 +17,14 @@ logger = logging.getLogger(__name__)
 class GradualDriftScenario(BaseScenario):
     """Simulate seasonal/user behavior drift over time - validates drift detection."""
 
-    def __init__(self) -> None:
+    DEFAULT_DURATION_MINUTES = 5
+
+    def __init__(self, duration_minutes: int | None = None) -> None:
+        mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="Gradual Drift",
             description="Simulate seasonal changes and behavior drift over weeks",
-            duration_minutes=5,
+            duration_minutes=mins,
             expected_metrics={
                 "drift_score_detected": 0.5,
                 "weeks_simulated": 4,
@@ -46,11 +49,15 @@ class GradualDriftScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Generating drifted data (simulated weeks)...")
-        start = datetime.now() - timedelta(days=28)
+        effective = self.get_effective_duration_minutes()
+        scale = effective / self.DEFAULT_DURATION_MINUTES
+        weeks = min(12, max(1, int(4 * scale)))
+        start = datetime.now() - timedelta(days=7 * weeks)
         self.current_data = []
-        for week in range(4):
+        for week in range(weeks):
             base_time = start + timedelta(days=week * 7)
-            for _ in range(100):
+            per_week = max(20, int(100 * scale))
+            for _ in range(per_week):
                 event = random.choice(self.events)
                 user = random.choice(self.users)
                 from simulator.config import UserPersona
@@ -59,7 +66,7 @@ class GradualDriftScenario(BaseScenario):
                     event, user, UserPersona(user["persona"]), ts
                 )
                 self.current_data.append(txn)
-        self.results["weeks_simulated"] = 4
+        self.results["weeks_simulated"] = weeks
         self.results["reference_data"] = self.reference_data
         self.results["current_data"] = self.current_data
 
@@ -79,3 +86,5 @@ class GradualDriftScenario(BaseScenario):
         else:
             self.results["drift_score_detected"] = 0.5
         self.results["weeks_simulated"] = self.results.get("weeks_simulated", 4)
+        if self.results["weeks_simulated"] == 0:
+            self.results["weeks_simulated"] = 4

@@ -36,11 +36,14 @@ def _degraded_response(transaction: Dict[str, Any], fail_rate: float) -> Dict[st
 class SystemDegradationScenario(BaseScenario):
     """Partial service failures - Redis slow, model timeout; validates fallbacks."""
 
-    def __init__(self) -> None:
+    DEFAULT_DURATION_MINUTES = 5
+
+    def __init__(self, duration_minutes: int | None = None) -> None:
+        mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="System Degradation",
             description="Partial failures - circuit breakers and graceful degradation",
-            duration_minutes=5,
+            duration_minutes=mins,
             expected_metrics={
                 "error_rate": 0.05,
                 "fallback_used_pct": 50,
@@ -59,8 +62,11 @@ class SystemDegradationScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Generating traffic with simulated degradation...")
+        effective = self.get_effective_duration_minutes()
+        scale = effective / self.DEFAULT_DURATION_MINUTES
+        count = max(50, int(200 * scale))
         transactions = self.txn_gen.generate_batch(
-            self.events, self.users, count=200, time_range_hours=1
+            self.events, self.users, count=count, time_range_hours=max(1, int(scale))
         )
         fail_rate = 0.05
         responses = [_degraded_response(t, fail_rate) for t in transactions]

@@ -31,11 +31,14 @@ def _synthetic_response(transaction: Dict[str, Any]) -> Dict[str, Any]:
 class FlashSaleScenario(BaseScenario):
     """Simulate mega-event flash sale with 100K+ users and traffic spike."""
 
-    def __init__(self) -> None:
+    DEFAULT_DURATION_MINUTES = 15
+
+    def __init__(self, duration_minutes: int | None = None) -> None:
+        mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="Flash Sale - Mega Event",
             description="Simulate high-demand event with 100K+ concurrent users",
-            duration_minutes=15,
+            duration_minutes=mins,
             expected_metrics={
                 "peak_rps": 10000,
                 "p99_latency_ms": 200,
@@ -138,14 +141,19 @@ class FlashSaleScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Starting flash sale traffic generation...")
+        effective = self.get_effective_duration_minutes()
+        scale = effective / self.DEFAULT_DURATION_MINUTES
+        p1 = max(1, int(2 * scale))
+        p2 = max(1, int(3 * scale))
+        p3 = max(1, int(2 * scale))
         responses_phase1 = asyncio.run(
-            self._generate_traffic_wave(duration_seconds=2, target_rps=500)
+            self._generate_traffic_wave(duration_seconds=p1, target_rps=500)
         )
         responses_phase2 = asyncio.run(
-            self._generate_traffic_wave(duration_seconds=3, target_rps=1000)
+            self._generate_traffic_wave(duration_seconds=p2, target_rps=1000)
         )
         responses_phase3 = asyncio.run(
-            self._generate_traffic_wave(duration_seconds=2, target_rps=200)
+            self._generate_traffic_wave(duration_seconds=p3, target_rps=200)
         )
         all_responses = responses_phase1 + responses_phase2 + responses_phase3
         self.results["responses"] = all_responses
