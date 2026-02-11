@@ -194,10 +194,13 @@ def realtime(scenario_name: str, duration: int, rps: float, output: str) -> None
     try:
         from simulator.visualizers.report_generator import ReportGenerator
         class FakeScenario:
-            name = "Realtime"
-            description = f"Realtime {duration}s @ {rps} rps"
-            results = results
-        ReportGenerator().generate_html(FakeScenario(), {"passed": True, "failures": [], "metrics": {}, **results}, output)
+            def __init__(self, metrics: dict) -> None:
+                self.name = "Realtime"
+                self.description = f"Realtime {duration}s @ {rps} rps"
+                self.results = metrics
+
+        fake_scenario = FakeScenario(results)
+        ReportGenerator().generate_html(fake_scenario, {"passed": True, "failures": [], "metrics": {}, **results}, output)
         click.echo(f"Report saved: {output}")
     except Exception as e:
         logger.warning("Could not generate report: %s", e)
