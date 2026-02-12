@@ -7,13 +7,15 @@ The BentoML-specific decorators are intentionally kept thin; the core request
 handling logic is implemented in pure Python functions so it can be exercised
 directly from unit tests without running a HTTP server.
 
-Auto-training integration
--------------------------
+Failure tracking and auto-training
+----------------------------------
 The service maintains a ``FailureTracker`` that records prediction outcomes
-reported via the ``/feedback`` endpoint.  When the failure rate over the
-configured monitoring window exceeds the threshold, an
-``AutoTrainingOrchestrator`` retrains the model in a background thread and
-hot-reloads the new model into production with zero downtime.
+reported via the ``/feedback`` endpoint. It exposes ``/admin/stats`` with
+failure rate and sample count so the Airflow DAG ``auto_training_on_fraud_rate``
+can poll and decide when to trigger retraining. Model training is only
+triggered by the Airflow DAG; this service does not run training. After the
+DAG trains and promotes a new model, it calls ``/admin/reload`` to hot-reload
+the model in this process.
 """
 
 import logging
@@ -84,20 +86,18 @@ def reload_model() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Auto-training wiring
+# Failure tracking (for /admin/stats; training is triggered by Airflow DAG only)
 # ---------------------------------------------------------------------------
 
 _FAILURE_TRACKER = None
-_ORCHESTRATOR = None
 
 
 def _get_failure_tracker():
-    """Lazy-init the failure tracker and auto-training orchestrator."""
-    global _FAILURE_TRACKER, _ORCHESTRATOR
+    """Lazy-init the failure tracker. No in-service training; DAG triggers retrain."""
+    global _FAILURE_TRACKER
     if _FAILURE_TRACKER is not None:
         return _FAILURE_TRACKER
 
-    from common.auto_training import AutoTrainingOrchestrator, RetrainingResult
     from common.config import get_config
     from services.bentoml.common.failure_tracker import FailureTracker
 
@@ -107,36 +107,18 @@ def _get_failure_tracker():
         return None
 
     logger.info(
-        "Auto-training config: threshold=%.0f%%, window=%ds, cooldown=%ds, min_samples=%d",
+        "Failure tracking: threshold=%.0f%%, window=%ds, min_samples=%d (retrain via Airflow DAG only)",
         cfg.failure_rate_threshold * 100,
         cfg.monitoring_window_seconds,
-        cfg.cooldown_seconds,
         cfg.min_samples,
     )
-
-    def _on_model_ready(result: RetrainingResult) -> None:
-        if result.success:
-            reload_model()
-            # Clear tracked outcomes so the window starts fresh with the new
-            # model – old failures are no longer relevant.
-            if _FAILURE_TRACKER is not None:
-                _FAILURE_TRACKER.reset()
-
-    _ORCHESTRATOR = AutoTrainingOrchestrator(
-        config=cfg,
-        on_model_ready=_on_model_ready,
-    )
-
-    def _on_threshold_breached(failure_rate: float, n_samples: int) -> None:
-        assert _ORCHESTRATOR is not None
-        _ORCHESTRATOR.run(failure_rate, n_samples)
 
     _FAILURE_TRACKER = FailureTracker(
         window_seconds=cfg.monitoring_window_seconds,
         failure_rate_threshold=cfg.failure_rate_threshold,
         cooldown_seconds=cfg.cooldown_seconds,
         min_samples=cfg.min_samples,
-        on_threshold_breached=_on_threshold_breached,
+        on_threshold_breached=None,  # Do not trigger training here; Airflow DAG does it.
     )
     return _FAILURE_TRACKER
 
@@ -264,21 +246,16 @@ def handle_feedback(feedback_req: FraudFeedbackRequest) -> FraudFeedbackResponse
     """
     Record ground-truth feedback for past predictions.
 
-    Each feedback item is recorded in the ``FailureTracker``. If the failure
-    rate crosses the configured threshold, auto-retraining is triggered
-    asynchronously.
+    Each feedback item is recorded in the ``FailureTracker`` for /admin/stats.
+    Retraining is triggered only by the Airflow DAG, not by this service.
     """
     tracker = _get_failure_tracker()
-    training_triggered = False
-
     if tracker is not None:
-        was_training = tracker.training_in_progress
         for fb in feedback_req.feedbacks:
             tracker.record(
                 predicted_fraud=fb.predicted_fraud,
                 actual_fraud=fb.actual_fraud,
             )
-        training_triggered = tracker.training_in_progress and not was_training
         failure_rate, n_samples = tracker.get_failure_rate()
     else:
         failure_rate, n_samples = 0.0, 0
@@ -287,7 +264,7 @@ def handle_feedback(feedback_req: FraudFeedbackRequest) -> FraudFeedbackResponse
         accepted=len(feedback_req.feedbacks),
         failure_rate=failure_rate,
         window_samples=n_samples,
-        training_triggered=training_triggered,
+        training_triggered=False,  # Only the Airflow DAG triggers training.
     )
 
 
@@ -309,10 +286,14 @@ def handle_healthcheck() -> dict:
 def handle_admin_reload() -> dict:
     """
     Hot-reload the fraud model from MLflow (push from Airflow).
-    Returns status and optional error detail.
+    Returns status and optional error detail. Resets the failure tracker
+    so the stats window starts fresh with the new model.
     """
     try:
         reload_model()
+        tracker = _get_failure_tracker()
+        if tracker is not None:
+            tracker.reset()
         return {"status": "reloaded"}
     except Exception as exc:
         logger.exception("Admin reload failed.")
