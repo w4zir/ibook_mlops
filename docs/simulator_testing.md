@@ -85,6 +85,8 @@ Stream traffic at a fixed RPS for a wall-clock duration (seconds):
 python -m simulator.cli realtime normal-traffic --duration 60 --rps 100 -o reports/realtime-report.html
 ```
 
+Optional **`--log-features`** (or `-f`): writes prediction features and ground truth to `data/training/realtime_features.parquet`. The Airflow DAG `auto_training_on_fraud_rate` can use this file for training when present and recent, instead of synthetic data.
+
 Expected: Live line updates (elapsed, txns, rps, errors); final summary and report. Use Ctrl+C for graceful stop.
 
 ---
@@ -126,7 +128,7 @@ Expected: All tests pass (green). No Docker or live API required; scenarios use 
 
 ## Testing with Docker Compose
 
-Run the simulator against the live stack (BentoML fraud API, etc.):
+Run the simulator against the live stack (BentoML fraud API, Airflow, etc.):
 
 ### Start stack and simulator overlay
 
@@ -144,7 +146,7 @@ Reports are in `./reports/` (mounted from host).
 
 ### Point simulator at fraud API
 
-Set `API_BASE_URL` for the simulator service (e.g. `http://bentoml-fraud:7001`). Then run scenarios as above; they will hit the live `/predict` endpoint instead of synthetic responses.
+Set `API_BASE_URL` for the simulator service (e.g. `http://bentoml-fraud:7001`). Then run scenarios as above; they will hit the live `/predict` endpoint instead of synthetic responses. For auto-training on failure rate, ensure the Airflow DAG `auto_training_on_fraud_rate` is running and can reach the fraud service at `BENTOML_BASE_URL`; the DAG polls `/admin/stats` and triggers retrain + `/admin/reload` when the failure-rate threshold is breached.
 
 Expected: Same CLI output as local; latency and fraud metrics reflect real API behavior.
 

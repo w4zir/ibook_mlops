@@ -235,11 +235,72 @@ flowchart LR
     Check --> Retrain[trigger_retraining]
 ```
 
+### 6.1 Auto-Training on Failure Rate (Airflow DAG + BentoML)
+
+In addition to the batch-oriented Airflow monitoring, the platform supports **auto-retraining** triggered by prediction failure rate. An **Airflow DAG** (`auto_training_on_fraud_rate`) periodically checks the failure rate exposed by the BentoML fraud service; when the rate breaches a threshold, the DAG builds a training dataset, trains a new model, registers it in MLflow, promotes to Production, and triggers a hot-reload in BentoML. This gives a closed loop with no in-service training logic: orchestration is centralized in Airflow.
+
+**Architecture:**
+
+```mermaid
+sequenceDiagram
+    participant DAG as Airflow DAG<br/>auto_training_on_fraud_rate
+    participant BentoML as BentoML Fraud Service
+    participant MLflow as MLflow Registry
+    participant Features as Feature Store / Logs
+
+    loop Every N seconds (AUTO_TRAINING_DAG_INTERVAL_SECONDS)
+        DAG->>BentoML: GET /admin/stats
+        BentoML-->>DAG: failure_rate, window_samples
+        DAG->>DAG: failure_rate >= threshold? window_samples >= min_samples?
+    end
+
+    alt Threshold breached
+        DAG->>Features: Build training dataset (realtime_features.parquet or synthetic)
+        DAG->>DAG: train_model (XGBoost + Optuna)
+        DAG->>DAG: evaluate_quality (min ROC-AUC, accuracy)
+        DAG->>MLflow: Register & promote to Production
+        DAG->>BentoML: POST /admin/reload
+        BentoML->>MLflow: Load new Production model
+    end
+```
+
+**How it works:**
+
+1. The BentoML fraud service exposes **`/admin/stats`** (and **`/admin/reload`**). The service maintains a **FailureTracker** (sliding window of prediction outcomes from `/feedback`); `/admin/stats` returns the current `failure_rate` and `window_samples`.
+2. The **Airflow DAG** runs on a schedule (e.g. every 60 seconds, configurable via `AUTO_TRAINING_DAG_INTERVAL_SECONDS`). Each run:
+   - **check_fraud_rate:** Calls `BENTOML_BASE_URL/admin/stats` to get failure rate and sample count.
+   - **evaluate_threshold:** Uses `AutoTrainingConfig`; if `failure_rate < threshold` or `window_samples < min_samples`, the DAG short-circuits (skips remaining tasks).
+   - **build_training_dataset:** Uses `data/training/realtime_features.parquet` if present and recent (e.g. from simulator realtime with `--log-features`); otherwise builds a synthetic dataset via `_build_synthetic_dataset()` from `common/auto_training.py`.
+   - **train_model:** Calls `train_fraud_model()` from `common/model_utils.py` (experiment `fraud_detection_auto_retrain`).
+   - **evaluate_quality:** Applies quality gates (e.g. min ROC-AUC 0.60, min accuracy 0.65); skips promotion if gates fail.
+   - **register_model** → **finalize_promotion:** Registers and promotes the model to Production in MLflow.
+   - **notify_reload:** POSTs to `BENTOML_BASE_URL/admin/reload` so the fraud service loads the new Production model.
+3. BentoML’s **hot-reload** swaps the in-memory model; in-flight requests use the old model, new requests use the new one.
+
+**Configuration** (`common/config.py` → `AutoTrainingConfig`; used by the DAG and by BentoML for `/admin/stats`):
+
+| Parameter | Env Var | Default | Description |
+|-----------|---------|---------|-------------|
+| `failure_rate_threshold` | `AUTO_TRAINING_FAILURE_RATE_THRESHOLD` | `0.4` | Failure rate (0–1) that triggers retraining |
+| `monitoring_window_seconds` | `AUTO_TRAINING_MONITORING_WINDOW_SECONDS` | `300` | Sliding window size in seconds |
+| `cooldown_seconds` | `AUTO_TRAINING_COOLDOWN_SECONDS` | `120` | Minimum wait between retrains |
+| `min_samples` | `AUTO_TRAINING_MIN_SAMPLES` | `20` | Minimum feedback samples before rate is meaningful |
+| `training_dataset_size` | `AUTO_TRAINING_TRAINING_DATASET_SIZE` | `512` | Rows in retraining dataset |
+
+DAG interval (Airflow): `AUTO_TRAINING_DAG_INTERVAL_SECONDS` (default 60). BentoML base URL: `BENTOML_BASE_URL` or `FRAUD_API_BASE_URL` (default `http://localhost:7001`).
+
+**Key design decisions:**
+
+- **Orchestration in Airflow** — Retraining and promotion are DAG tasks; no long-running training process inside BentoML.
+- **BentoML exposes stats and reload** — FailureTracker remains in the fraud service for low-latency feedback ingestion; the DAG only reads aggregated stats and triggers reload.
+- **Fail-safe** — If training or registration fails, the DAG fails that run; the existing production model keeps serving.
+- **Optional real data** — Simulator realtime with `--log-features` writes to `data/training/realtime_features.parquet` so the DAG can train on logged production-like features when available.
+
 ---
 
 ## 7. Orchestration (Airflow)
 
-Three DAGs live under `services/airflow/dags/`.
+Four DAGs live under `services/airflow/dags/`.
 
 **feature_engineering_pipeline (hourly):**
 
@@ -271,8 +332,30 @@ flowchart LR
     Register --> Canary[deploy_canary]
     Canary --> Monitor[monitor_canary]
     Monitor --> Promote[finalize_promotion]
-    Promote --> End2[end]
+    Promote --> NotifyReload[notify_bentoml_reload]
+    NotifyReload --> End2[end]
 ```
+
+After promotion, **notify_bentoml_reload** sends POST to `BENTOML_BASE_URL/admin/reload` so the fraud service loads the new Production model.
+
+**auto_training_on_fraud_rate (every N seconds, default 60):**
+
+```mermaid
+flowchart LR
+    Start3[start] --> Check[check_fraud_rate]
+    Check --> EvalT[evaluate_threshold]
+    EvalT -->|breached| BuildD[build_training_dataset]
+    EvalT -->|ok| Skip[end skip]
+    BuildD --> TrainM[train_model]
+    TrainM --> EvalQ[evaluate_quality]
+    EvalQ -->|pass| RegM[register_model]
+    EvalQ -->|fail| Reject[end reject]
+    RegM --> Finalize[finalize_promotion]
+    Finalize --> NotifyReload2[notify_reload]
+    NotifyReload2 --> End3[end]
+```
+
+Tasks: poll BentoML `/admin/stats` → if threshold breached, build dataset (realtime_features.parquet or synthetic) → train → quality gates → register & promote in MLflow → POST `/admin/reload` to BentoML. See section 6.1.
 
 **ml_monitoring_pipeline (daily):** See section 6 (collect → compute drift → check thresholds → send_alerts, trigger_retraining).
 
@@ -297,6 +380,7 @@ flowchart TB
         Normal[NormalTraffic]
         Flash[FlashSale]
         Fraud[FraudAttack]
+        FraudDrift["FraudDriftRetrain<br/>(novel fraud → auto-retrain)"]
         Drift[GradualDrift]
         Degradation[SystemDegradation]
         BlackFriday[BlackFriday]
@@ -337,7 +421,22 @@ FUNCTION execute():
 - **TransactionGenerator:** num_tickets, tier, price, payment_method, device/session, fraud_indicators (velocity, device_mismatch, geo_mismatch, time_anomaly), is_fraud.
 - **FraudSimulator:** Patterns (credential_stuffing, card_testing, bot_scalping) with configurable attack and success rates.
 
-**CLI:** `simulator.cli` — `list-scenarios`, `run <scenario> -o report.html`, `run-all -o reports/`.
+**Scenarios:**
+
+| Scenario | Purpose |
+|----------|---------|
+| `normal-traffic` | Baseline operations (~3% fraud) |
+| `flash-sale` | Mega-event launch (10K+ RPS) |
+| `fraud-attack` | Coordinated fraud (credential stuffing, card testing, bot scalping) |
+| `fraud-drift-retrain` | **Novel fraud patterns** (account takeover, synthetic identity, refund abuse) that cause model degradation and trigger auto-retraining |
+| `gradual-drift` | Seasonal behavior changes |
+| `system-degradation` | Partial service failures |
+| `black-friday` | Extreme load |
+| `mix` | Weighted combination of scenarios |
+
+**fraud-drift-retrain scenario details:** This scenario introduces three novel fraud vectors that the production model has never seen, producing feature distributions different from the original training data. Account takeover uses high `lifetime_purchases` with low `fraud_risk_score`; synthetic identity uses zero history; refund abuse uses moderate features that are hard to distinguish from legitimate users. The model misses ~70% of these novel patterns, causing the failure rate to breach the auto-training threshold and trigger retraining.
+
+**CLI:** `simulator.cli` — `list-scenarios`, `run <scenario> -o report.html`, `run-all -o reports/`, `realtime <scenario> --duration 60 --rps 100`.
 
 ---
 
@@ -356,5 +455,6 @@ FUNCTION execute():
 - **MlflowConfig** — tracking_uri, artifact root.
 - **AirflowConfig** — webserver URL.
 - **StorageConfig** — GCS bucket for production.
+- **AutoTrainingConfig** — failure_rate_threshold, monitoring_window_seconds, cooldown_seconds, min_samples, training_dataset_size (see section 6.1).
 
 Config is loaded via `get_config()` and used by feature utils, model utils, and BentoML common code so the same codebase works locally and in production with different env vars.
