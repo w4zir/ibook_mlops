@@ -15,10 +15,11 @@ utilities in `common.model_utils`. It is designed to be:
   some are stubs for now.
 """
 
+import json
+import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any, Dict
-
-import logging
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,14 @@ except ImportError:
 
 
 DAG_ID = "model_training_pipeline"
+
+
+def _bentoml_base_url() -> str:
+    return (
+        os.environ.get("BENTOML_BASE_URL")
+        or os.environ.get("FRAUD_API_BASE_URL")
+        or "http://localhost:7001"
+    ).rstrip("/")
 
 
 def _build_training_dataset(**_: Any) -> pd.DataFrame:
@@ -186,6 +195,39 @@ def _finalize_promotion(**context: Any) -> None:
         logging.info("Model candidate was not accepted; keeping existing production model.")
 
 
+def _notify_bentoml_reload(**context: Any) -> None:
+    """
+    Call BentoML fraud service POST /admin_reload to hot-reload the new model.
+    Only runs when the candidate model was accepted.
+    """
+    import urllib.request
+
+    ti = context["ti"]
+    evaluation: Dict[str, Any] = ti.xcom_pull(task_ids="evaluate_against_baseline") or {}
+    if not evaluation.get("accepted"):
+        logging.info("Model not accepted; skipping BentoML reload.")
+        return
+
+    url = f"{_bentoml_base_url()}/admin_reload"
+    req = urllib.request.Request(
+        url,
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode()
+            data = json.loads(body) if body else {}
+        status = data.get("status", "")
+        logging.info("BentoML reload response: %s", data)
+        if status != "reloaded":
+            raise RuntimeError(f"BentoML reload returned status={status}: {data.get('detail', '')}")
+    except Exception as e:
+        logging.exception("Failed to call admin_reload at %s: %s", url, e)
+        raise
+
+
 default_args = {
     "owner": "ml-platform",
     "retries": get_retries_for_dag(DAG_ID, 1),
@@ -245,6 +287,12 @@ with DAG(
         provide_context=True,
     )
 
+    notify_bentoml_reload = PythonOperator(
+        task_id="notify_bentoml_reload",
+        python_callable=_notify_bentoml_reload,
+        provide_context=True,
+    )
+
     end = EmptyOperator(task_id="end")
 
     (
@@ -256,6 +304,7 @@ with DAG(
         >> deploy_canary
         >> monitor_canary
         >> finalize_promotion
+        >> notify_bentoml_reload
         >> end
     )
 

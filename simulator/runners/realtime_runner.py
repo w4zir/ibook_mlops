@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
 from simulator.config import UserPersona, config
@@ -42,6 +43,7 @@ class RealtimeRunner:
         rps: float = 100,
         api_base_url: str | None = None,
         fraud_api_base_url: str | None = None,
+        log_features: bool = False,
     ) -> None:
         self.scenario_class = scenario_class or NormalTrafficScenario
         self.duration_seconds = duration_seconds
@@ -50,11 +52,14 @@ class RealtimeRunner:
         self.api_base_url = (api_base_url or config.api_base_url).rstrip("/")
         # Dedicated fraud API base URL pointing at BentoML fraud detection.
         self.fraud_api_base_url = (fraud_api_base_url or config.fraud_api_base_url).rstrip("/")
+        self.log_features = log_features
         self.results: Dict[str, Any] = {}
         self._scenario: BaseScenario | None = None
         # Feedback batch for auto-training metrics; flushed every progress interval.
         self._feedback_batch: List[Dict[str, Any]] = []
         self._last_feedback_stats: Optional[Dict[str, Any]] = None
+        # Feature log for auto model training when log_features=True.
+        self._feature_log: List[Dict[str, Any]] = []
 
     def _get_events_users_txn_gen(self) -> tuple[List[Dict], List[Dict], Any]:
         """Return (events or [single event], users, txn_gen) from the scenario."""
@@ -81,6 +86,7 @@ class RealtimeRunner:
         self._scenario = self.scenario_class()
         self._scenario.setup()
         self._feedback_batch = []
+        self._feature_log = []
         self._last_feedback_stats = None
         events, users, txn_gen = self._get_events_users_txn_gen()
         responses: List[Dict[str, Any]] = []
@@ -123,6 +129,20 @@ class RealtimeRunner:
                     "predicted_fraud": resp.get("predicted_is_fraud", resp.get("blocked", False)),
                     "actual_fraud": txn.get("is_fraud", False),
                 })
+                # Log features for auto model training when flag is set.
+                if self.log_features:
+                    overrides = txn.get("feature_overrides") or {}
+                    self._feature_log.append({
+                        "user_id": txn["user_id"],
+                        "event_id": txn["event_id"],
+                        "amount": float(txn.get("total_amount", 0.0)),
+                        "lifetime_purchases": overrides.get("user_purchase_behavior__lifetime_purchases", overrides.get("lifetime_purchases", 0)),
+                        "fraud_risk_score": overrides.get("user_purchase_behavior__fraud_risk_score", overrides.get("fraud_risk_score", 0.5)),
+                        "fraud_score": resp.get("fraud_score", 0.0),
+                        "predicted_is_fraud": resp.get("predicted_is_fraud", False),
+                        "actual_fraud": txn.get("is_fraud", False),
+                        "timestamp": time.time(),
+                    })
             next_send += interval
             if now - last_print >= 1.0:
                 elapsed = now - start
@@ -149,6 +169,9 @@ class RealtimeRunner:
 
         elapsed_total = time.monotonic() - start
         print()
+        # Write feature log to Parquet for auto model training if enabled.
+        if self.log_features and self._feature_log:
+            self._write_feature_log()
         self.results["responses"] = responses
         self.results["duration_seconds"] = elapsed_total
         if responses:
@@ -162,6 +185,24 @@ class RealtimeRunner:
             self.results["error_rate"] = errors / len(responses)
             self.results["peak_rps"] = len(responses) / elapsed_total
         return self.results
+
+    def _write_feature_log(self) -> None:
+        """Write accumulated feature log to data/training/realtime_features.parquet (append if exists)."""
+        try:
+            import pandas as pd
+
+            out_path = Path("data/training/realtime_features.parquet")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            new_df = pd.DataFrame(self._feature_log)
+            if out_path.exists():
+                existing = pd.read_parquet(out_path)
+                combined = pd.concat([existing, new_df], ignore_index=True)
+            else:
+                combined = new_df
+            combined.to_parquet(out_path, index=False)
+            logger.info("Wrote %d feature rows to %s (total %d).", len(new_df), out_path, len(combined))
+        except Exception as e:
+            logger.warning("Failed to write feature log to parquet: %s", e)
 
     def _build_fraud_payload(self, transaction: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -306,6 +306,45 @@ def handle_healthcheck() -> dict:
         return _health_payload(False, f"error: {exc}")
 
 
+def handle_admin_reload() -> dict:
+    """
+    Hot-reload the fraud model from MLflow (push from Airflow).
+    Returns status and optional error detail.
+    """
+    try:
+        reload_model()
+        return {"status": "reloaded"}
+    except Exception as exc:
+        logger.exception("Admin reload failed.")
+        return {"status": "error", "detail": str(exc)}
+
+
+def handle_admin_stats() -> dict:
+    """
+    Expose current failure rate and threshold for Airflow DAG to decide
+    whether to trigger retraining. When auto-training is disabled or
+    FailureTracker not yet initialized, returns zeros and config threshold.
+    """
+    from common.config import get_config
+
+    cfg = get_config().auto_training
+    tracker = _get_failure_tracker()
+    if tracker is not None:
+        failure_rate, window_samples = tracker.get_failure_rate()
+        return {
+            "failure_rate": failure_rate,
+            "window_samples": window_samples,
+            "threshold": cfg.failure_rate_threshold,
+            "training_in_progress": tracker.training_in_progress,
+        }
+    return {
+        "failure_rate": 0.0,
+        "window_samples": 0,
+        "threshold": cfg.failure_rate_threshold,
+        "training_in_progress": False,
+    }
+
+
 svc = None
 if bentoml is not None and JSON is not None:  # pragma: no cover - HTTP layer
     # --- BentoML service definition -------------------------------------------
@@ -352,3 +391,32 @@ if bentoml is not None and JSON is not None:  # pragma: no cover - HTTP layer
             status = 200 if payload.get("ok") else 500
             record_request(SERVICE_NAME, endpoint, http_status=status)
             return payload
+
+    @svc.api(input=JSON(), output=JSON())
+    def admin_reload(_: dict) -> dict:
+        """POST /admin/reload: hot-reload model from MLflow (e.g. from Airflow)."""
+        endpoint = "/admin/reload"
+        with track_latency(SERVICE_NAME, endpoint):
+            try:
+                payload = handle_admin_reload()
+                status = 200 if payload.get("status") == "reloaded" else 500
+                record_request(SERVICE_NAME, endpoint, http_status=status)
+                return payload
+            except Exception as exc:
+                record_error(SERVICE_NAME, endpoint)
+                record_request(SERVICE_NAME, endpoint, http_status=500)
+                return {"status": "error", "detail": str(exc)}
+
+    @svc.api(input=JSON(), output=JSON())
+    def admin_stats(_: dict) -> dict:
+        """POST /admin/stats: failure rate and threshold for Airflow DAG."""
+        endpoint = "/admin/stats"
+        with track_latency(SERVICE_NAME, endpoint):
+            try:
+                payload = handle_admin_stats()
+                record_request(SERVICE_NAME, endpoint, http_status=200)
+                return payload
+            except Exception as exc:
+                record_error(SERVICE_NAME, endpoint)
+                record_request(SERVICE_NAME, endpoint, http_status=500)
+                raise RuntimeError(f"fraud_detection.admin_stats failed: {exc}") from exc

@@ -1528,7 +1528,7 @@ Add to **Phase 10** in existing PLAN.md:
 
 - **Duration override:** Use `--duration N` (minutes) with `run` or `run-all` to scale scenario workload (e.g. `python -m simulator.cli run normal-traffic --duration 10`).
 - **Mix mode:** Run a weighted combination of scenarios for a set duration: `python -m simulator.cli mix --duration 30 --scenarios "normal-traffic:40,flash-sale:20,fraud-attack:20,system-degradation:10,black-friday:10"`. See `simulator/scenarios/mixed.py` (MixedScenario).
-- **Realtime runner:** Stream traffic at a fixed RPS for wall-clock seconds: `python -m simulator.cli realtime normal-traffic --duration 60 --rps 100`. See `simulator/runners/realtime_runner.py`; supports graceful Ctrl+C.
+- **Realtime runner:** Stream traffic at a fixed RPS for wall-clock seconds: `python -m simulator.cli realtime normal-traffic --duration 60 --rps 100`. See `simulator/runners/realtime_runner.py`; supports graceful Ctrl+C. Use **`--log-features`** to write features and ground truth to `data/training/realtime_features.parquet` for the Airflow DAG `auto_training_on_fraud_rate` to use as training data when present.
 
 For detailed testing steps, expected results, and tool usage, see **[docs/simulator_testing.md](simulator_testing.md)**.
 
@@ -1564,12 +1564,17 @@ make sim-dashboard
 
 ### Fraud Drift Auto-Retrain Scenario
 
+Auto-retraining is orchestrated by the **Airflow DAG** `auto_training_on_fraud_rate`: it polls the BentoML fraud service `/admin/stats` for failure rate and, when the threshold is breached, trains a new model, promotes it in MLflow, and calls `/admin/reload` to hot-reload the model. Run the fraud-drift-retrain scenario with the stack (BentoML + Airflow) up to exercise this loop.
+
 ```bash
-# Run the fraud drift scenario to test auto-retraining
+# Run the fraud drift scenario to test auto-retraining (ensure Airflow DAG auto_training_on_fraud_rate is unpaused)
 python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
 
 # Run in realtime mode against the live BentoML service
-python -m simulator.cli realtime fraud-drift-retrain --duration 120 --rps 50
+python -m simulator.cli realtime fraud-drift-retrain --duration 120 --rps 50 -o reports/realtime-fraud-drift.html
+
+# Realtime with feature logging (writes data/training/realtime_features.parquet for the DAG to use as training data)
+python -m simulator.cli realtime fraud-drift-retrain --duration 120 --rps 50 --log-features -o reports/realtime-fraud-drift.html
 
 # Combine with other scenarios
 python -m simulator.cli mix --duration 30 --scenarios "normal-traffic:40,fraud-drift-retrain:30,fraud-attack:30"
@@ -1657,9 +1662,9 @@ Add to `.github/workflows/mlops-cicd.yml`:
 - [ ] Error rate < 1% during flash sales
 - [ ] Fraud detection recall > 95%
 - [ ] Graceful degradation during failures
-- [ ] Auto-retraining triggers on drift
-- [ ] Auto-retraining triggers on failure rate breach (novel fraud patterns)
-- [ ] Model hot-reload completes without downtime
+- [ ] Auto-retraining triggers on drift (via Airflow DAG / monitoring pipeline)
+- [ ] Auto-retraining triggers on failure rate breach (Airflow DAG `auto_training_on_fraud_rate`; novel fraud patterns)
+- [ ] Model hot-reload (BentoML `/admin/reload` after DAG promotion) completes without downtime
 - [ ] Zero data loss during chaos events
 
 ---
