@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+*.egg-info/
 *.py[cod]
 *.pyd
 *.so
@@ -46,4 +47,3 @@ data/models/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/models/.gitkeep
-
