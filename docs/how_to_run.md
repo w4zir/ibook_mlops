@@ -298,8 +298,7 @@ Unpause each DAG and trigger a run from the UI. Kafka/Evidently/Slack integratio
 - **Prometheus:** http://localhost:9090 — metrics and alert rules (Alerts / Status → Rules).
 - **Grafana:** http://localhost:3000 — open **Dashboards** → **MLOps Overview** (provisioned from `services/monitoring/grafana/dashboards/`).
 
-BentoML services expose `/metrics`; Prometheus scrapes them. See **Observability.md** for full observability and “how to observe” guides.
-
+BentoML fraud (7001) and pricing (7002) services expose `/metrics`; Prometheus scrapes them. For how to observe drift, retraining, fraud, and degradation, see [Observability.md](Observability.md).
 ---
 
 ### Run tests

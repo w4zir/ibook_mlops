@@ -13,6 +13,7 @@ The **Ibook Event Simulator** runs predefined scenarios to stress-test the MLOps
 | **normal-traffic** | Baseline daily operations, 100–500 RPS, ~3% fraud | p99 &lt; 200 ms, error rate &lt; 1% |
 | **flash-sale** | Mega-event launch, traffic spike, bot traffic | Peak RPS, fraud detection ~90%, latency within SLA |
 | **fraud-attack** | Coordinated fraud (credential stuffing, card testing, scalping) | Fraud recall ≥ 90%, precision ≥ 85% |
+| **fraud-drift-retrain** | Novel fraud patterns → auto-retrain trigger | Failure rate breach, DAG retrain, model reload when stack is up |
 | **gradual-drift** | Seasonal/behavior drift over weeks | Drift score detected, weeks_simulated as configured |
 | **system-degradation** | Partial failures, circuit breakers, fallback | Error rate ~5%, fallback usage measurable |
 | **black-friday** | Extreme sustained load | Peak RPS, p99 &lt; 200 ms, error rate &lt; 2% |
@@ -37,6 +38,7 @@ Expected: Table of scenario names, descriptions, and default duration (minutes).
 ```bash
 python -m simulator.cli run normal-traffic -o reports/normal-traffic-report.html
 python -m simulator.cli run flash-sale -o reports/flash-sale-report.html
+python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
 ```
 
 Optional `--duration` (minutes) scales the workload:
@@ -46,6 +48,17 @@ python -m simulator.cli run normal-traffic --duration 10 -o reports/normal-10min
 ```
 
 Expected: Progress bar, then "PASSED" or "FAILED" with failure lines; HTML report written.
+
+### fraud-drift-retrain (auto-training)
+
+With the stack up (BentoML fraud service and Airflow DAG `auto_training_on_fraud_rate`), this scenario injects novel fraud patterns so the failure rate can breach the threshold and trigger retraining and model reload:
+
+```bash
+python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
+python -m simulator.cli run fraud-drift-retrain --duration 15 -o reports/fraud-drift-retrain-report.html
+```
+
+Expected: Scenario runs; if failure rate exceeds the DAG threshold, the DAG builds training data, trains a new model, promotes it in MLflow, and POSTs to BentoML `/admin/reload`.
 
 ### Dry run (setup only)
 

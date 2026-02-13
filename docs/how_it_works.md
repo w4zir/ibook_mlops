@@ -1,6 +1,6 @@
 # How It Works
 
-This document describes each component of the Ibook MLOps platform: architecture, data flows, algorithms (in pseudo-code style), and configuration.
+This document describes each component of the Ibook MLOps platform: architecture, data flows, algorithms (in pseudo-code style), and configuration. It reflects the system as implemented (as of February 2026). For planned vs implemented items, see [PLAN.md](PLAN.md).
 
 ---
 

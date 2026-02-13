@@ -1,6 +1,6 @@
 # Observability
 
-This document describes the observability stack (Prometheus, Grafana, alerts), all metrics and health checks, and how to observe specific functionalities and situations—including model drift, retraining triggers, fraud detection performance, flash sales, and system degradation.
+Describes the observability stack as configured in this repo: Prometheus, Grafana, alert rules, metrics, and health checks, and how to observe drift, retraining, fraud detection performance, flash sales, and system degradation.
 
 ---
 

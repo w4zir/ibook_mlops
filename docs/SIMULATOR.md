@@ -13,11 +13,15 @@ The **Ibook Event Simulator** generates realistic ticketing scenarios to test th
 - Data drift
 - Black Friday-style traffic spikes
 
+### Current implementation
+
+Implemented today: core generators (event, user, transaction, fraud), scenarios `normal-traffic`, `flash-sale`, `fraud-attack`, `fraud-drift-retrain`, `gradual-drift`, `system-degradation`, `black-friday`, and `mix` (MixedScenario), runners (local, load-test, realtime), validators (latency, accuracy, drift, business), HTML report generator, CLI (`list-scenarios`, `run`, `run-all`, `mix`, `realtime`), and `docker-compose.simulator.yml`. Streamlit dashboard is optional/future. For detailed testing steps, see [simulator_testing.md](simulator_testing.md).
+
 ---
 
-## 📁 Project Structure Updates
+## 📁 Project Structure
 
-Add to existing `ibook-mlops/` structure:
+Current layout (add to existing `ibook-mlops/` structure):
 
 ```
 ibook-mlops/
@@ -39,7 +43,7 @@ ibook-mlops/
 │   │   ├── fraud_drift_retrain.py  # Novel fraud → auto-retrain
 │   │   ├── gradual_drift.py        # Seasonal changes
 │   │   ├── system_degradation.py   # Partial failures
-│   │   ├── ab_test.py              # A/B testing scenarios
+│   │   ├── mixed.py                # Weighted mix of scenarios (MixedScenario)
 │   │   └── black_friday.py         # Extreme load
 │   ├── runners/
 │   │   ├── __init__.py
@@ -54,7 +58,7 @@ ibook-mlops/
 │   │   └── business_validator.py   # Revenue metrics
 │   ├── visualizers/
 │   │   ├── __init__.py
-│   │   ├── dashboard.py            # Streamlit dashboard
+│   │   ├── dashboard.py            # (optional / not implemented) Streamlit dashboard
 │   │   └── report_generator.py     # HTML/PDF reports
 │   └── cli.py                       # Command-line interface
 │
@@ -145,7 +149,7 @@ class SimulatorConfig(BaseModel):
     
     # Environment
     environment: str = "local"  # local, staging, production
-    api_base_url: str = "http://localhost:3001"
+    api_base_url: str = "http://localhost:7001"
     
     # Event distributions
     event_categories_distribution: Dict[EventCategory, float] = {

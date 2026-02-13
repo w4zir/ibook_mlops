@@ -19,6 +19,11 @@
 
 **Key Principle:** Same codebase for local development and production (config-driven differences only)
 
+### Current status (as of February 2026)
+
+- **Implemented:** Local Docker Compose stack (PostgreSQL, Redis, MinIO, Kafka, Zookeeper), Feast feature store, MLflow, BentoML fraud detection (port 7001) and dynamic pricing (port 7002), Airflow with 4 DAGs (`feature_engineering_pipeline`, `model_training_pipeline`, `auto_training_on_fraud_rate`, `ml_monitoring_pipeline`), Prometheus and Grafana, event ticketing simulator (all scenarios, CLI: list-scenarios, run, run-all, mix, realtime), validators and report generator, `docker-compose.simulator.yml`, unit/integration/simulation tests, core documentation in `docs/`.
+- **Not implemented / future:** GitHub Actions CI/CD workflow, Terraform and Kubernetes/GKE deployment, operational runbooks, optional Streamlit simulator dashboard.
+
 ---
 
 ## 📁 Project Structure to Create
