@@ -13,7 +13,6 @@ The **Ibook Event Simulator** runs predefined scenarios to stress-test the MLOps
 | **normal-traffic** | Baseline daily operations, 100–500 RPS, ~3% fraud | p99 &lt; 200 ms, error rate &lt; 1% |
 | **flash-sale** | Mega-event launch, traffic spike, bot traffic | Peak RPS, fraud detection ~90%, latency within SLA |
 | **fraud-attack** | Coordinated fraud (credential stuffing, card testing, scalping) | Fraud recall ≥ 90%, precision ≥ 85% |
-| **fraud-drift-retrain** | Novel fraud patterns → auto-retrain trigger | Failure rate breach, DAG retrain, model reload when stack is up |
 | **gradual-drift** | Seasonal/behavior drift over weeks | Drift score detected, weeks_simulated as configured |
 | **system-degradation** | Partial failures, circuit breakers, fallback | Error rate ~5%, fallback usage measurable |
 | **black-friday** | Extreme sustained load | Peak RPS, p99 &lt; 200 ms, error rate &lt; 2% |
@@ -38,7 +37,6 @@ Expected: Table of scenario names, descriptions, and default duration (minutes).
 ```bash
 python -m simulator.cli run normal-traffic -o reports/normal-traffic-report.html
 python -m simulator.cli run flash-sale -o reports/flash-sale-report.html
-python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
 ```
 
 Optional `--duration` (minutes) scales the workload:
@@ -48,17 +46,6 @@ python -m simulator.cli run normal-traffic --duration 10 -o reports/normal-10min
 ```
 
 Expected: Progress bar, then "PASSED" or "FAILED" with failure lines; HTML report written.
-
-### fraud-drift-retrain (auto-training)
-
-With the stack up (BentoML fraud service and Airflow DAG `auto_training_on_fraud_rate`), this scenario injects novel fraud patterns so the failure rate can breach the threshold and trigger retraining and model reload:
-
-```bash
-python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
-python -m simulator.cli run fraud-drift-retrain --duration 15 -o reports/fraud-drift-retrain-report.html
-```
-
-Expected: Scenario runs; if failure rate exceeds the DAG threshold, the DAG builds training data, trains a new model, promotes it in MLflow, and POSTs to BentoML `/admin/reload`.
 
 ### Dry run (setup only)
 
@@ -97,8 +84,6 @@ Stream traffic at a fixed RPS for a wall-clock duration (seconds):
 ```bash
 python -m simulator.cli realtime normal-traffic --duration 60 --rps 100 -o reports/realtime-report.html
 ```
-
-Optional **`--log-features`** (or `-f`): writes prediction features and ground truth to `data/training/realtime_features.parquet`. The Airflow DAG `auto_training_on_fraud_rate` can use this file for training when present and recent, instead of synthetic data.
 
 Expected: Live line updates (elapsed, txns, rps, errors); final summary and report. Use Ctrl+C for graceful stop.
 
@@ -159,7 +144,7 @@ Reports are in `./reports/` (mounted from host).
 
 ### Point simulator at fraud API
 
-Set `API_BASE_URL` for the simulator service (e.g. `http://bentoml-fraud:7001`). Then run scenarios as above; they will hit the live `/predict` endpoint instead of synthetic responses. For auto-training on failure rate, ensure the Airflow DAG `auto_training_on_fraud_rate` is running and can reach the fraud service at `BENTOML_BASE_URL`; the DAG polls `/admin/stats` and triggers retrain + `/admin/reload` when the failure-rate threshold is breached.
+Set `API_BASE_URL` for the simulator service (e.g. `http://bentoml-fraud:7001`). Then run scenarios as above; they will hit the live `/predict` endpoint instead of synthetic responses.
 
 Expected: Same CLI output as local; latency and fraud metrics reflect real API behavior.
 

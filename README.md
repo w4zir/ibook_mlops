@@ -35,7 +35,7 @@ Unit and integration: `make test` or `python -m pytest tests/ -v`. Simulator: `m
 
 ### Simulator
 
-Scenarios: `normal-traffic`, `flash-sale`, `fraud-attack`, `fraud-drift-retrain`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`. Design and testing: [docs/SIMULATOR.md](docs/SIMULATOR.md), [docs/simulator_testing.md](docs/simulator_testing.md).
+Scenarios: `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`. Design and testing: [docs/SIMULATOR.md](docs/SIMULATOR.md), [docs/simulator_testing.md](docs/simulator_testing.md).
 
 ### More documentation
 

@@ -1,14 +1,14 @@
-## Building a Self‑Healing Fraud Detection Platform with Modern MLOps
+## Building a Production Fraud Detection Platform with Modern MLOps
 
 Fraud detection systems age badly.
 
 What works on day one quietly decays as fraud patterns evolve, user behavior shifts, and your product team keeps shipping new features. If you’re unlucky, you only notice when chargebacks spike or regulators start asking awkward questions.
 
-In this post I’ll walk through how we built an end‑to‑end MLOps platform for fraud detection — from feature store and training to serving, monitoring, and auto‑retraining. The system is designed to be:
+In this post I’ll walk through how we built an end‑to‑end MLOps platform for fraud detection — from feature store and training to serving and monitoring. The system is designed to be:
 
 - **Reproducible**: same pipeline runs locally and in production  
 - **Observable**: clear signals when models are drifting or degrading  
-- **Self‑healing**: auto‑train and hot‑reload when failure rates breach thresholds  
+- **Operable**: scheduled retraining and hot‑reload keep models fresh  
 
 The examples are framed around a ticketing platform (think large events, flash sales, and fraud attacks), but the same patterns apply to many real‑time ML use cases.
 
@@ -78,7 +78,7 @@ flowchart TB
 1. **Feature engineering** jobs build aggregates and materialize them into Feast (offline + online stores).
 2. **Model training** jobs pull historical features from Feast, train models with XGBoost + Optuna, and log runs to MLflow.
 3. **Serving** services (BentoML) load the latest model from MLflow and online features from Feast to respond to prediction requests.
-4. **Monitoring & drift detection** track production behavior and can trigger retraining and hot‑reloads when failure rates or drift breach thresholds.
+4. **Monitoring & drift detection** track production behavior and can trigger retraining and hot‑reloads when drift is detected.
 
 ```mermaid
 flowchart LR
@@ -230,27 +230,25 @@ The service knows how to:
 
 ---
 
-## 6. Monitoring, Drift Detection, and Auto‑Retraining
+## 6. Monitoring and Drift Detection
 
 A model that never changes is as risky as no model at all.
 
-We combine **batch drift analysis** and **online failure‑rate monitoring** to decide when to retrain.
+We use **batch drift analysis** to decide when to retrain and hot‑reload.
 
 ```mermaid
 flowchart TB
     subgraph detect["Detection"]
         A[Production metrics & features]
         B[Drift analysis<br/>Evidently / statistical]
-        C[Failure rate from /feedback]
         A --> B
-        A --> C
     end
 
     subgraph decide["Decision"]
-        D{Drift ≥ 0.3 or<br/>failure_rate ≥ threshold?}
+        D{Drift ≥ 0.3?}
     end
 
-    subgraph heal["Self‑healing"]
+    subgraph retrain["Retraining"]
         E[Build training dataset]
         F[Train new model<br/>XGBoost + Optuna]
         G{Quality gates<br/>passed?}
@@ -260,7 +258,6 @@ flowchart TB
     end
 
     B --> D
-    C --> D
     D -->|yes| E
     D -->|no| N[No action]
 ```
@@ -274,31 +271,7 @@ An Airflow DAG (`ml_monitoring_pipeline`) runs daily to:
 3. Compute a **drift score** between 0 and 1.
 4. If drift ≥ 0.3, mark it as significant and (in a full deployment) trigger alerts and/or retraining.
 
-The fallback implementation is simple but robust: measure how far current means move away from reference, normalized by reference standard deviation, and average across columns.
-
-### 6.2 Auto‑Training on Failure Rate
-
-Batch drift is useful, but for fraud we also care about the **failure rate** of decisions observed at the edge (e.g. via `/feedback` on the fraud service).
-
-We implemented an Airflow DAG (`auto_training_on_fraud_rate`) that:
-
-1. Periodically calls the BentoML fraud service’s `/admin/stats` endpoint.  
-2. Reads a sliding‑window **failure rate** and sample count.  
-3. If both:
-   - `failure_rate >= threshold` (e.g. 0.4), and  
-   - `window_samples >= min_samples`,  
-   then it proceeds to retrain.
-
-The rest of the DAG:
-
-- Builds a training dataset from either logged real‑time features or a synthetic generator.
-- Trains a new model with the same XGBoost + Optuna pipeline (under a different MLflow experiment).
-- Applies **quality gates** (e.g. minimum ROC‑AUC and accuracy).
-- If the new model passes, registers it in **MLflow**, promotes it to Production, and tells BentoML to **hot‑reload** via `/admin/reload`.
-
-The key design choice: **all orchestration lives in Airflow**. BentoML just exposes statistics and a reload endpoint; it doesn’t train models itself.
-
-This keeps the serving process focused, stateless (except for a small in‑memory failure tracker), and easy to scale.
+The fallback implementation is simple but robust: measure how far current means move away from reference, normalized by reference standard deviation, and average across columns. When drift is significant, the pipeline can trigger alerts and (in a full deployment) downstream retraining and hot‑reload via the model training DAG.
 
 ---
 
@@ -317,7 +290,6 @@ On top of these primitives, we define **scenarios**:
 - `normal-traffic`: baseline operations with modest fraud rates.  
 - `flash-sale`: sudden spikes in request rate.  
 - `fraud-attack`: coordinated credential stuffing, card testing, bot scalping.  
-- `fraud-drift-retrain`: novel fraud patterns that the current model is bad at.  
 - `gradual-drift`: seasonal behavior changes.  
 - `system-degradation`: partial outages and slow dependencies.  
 - `black-friday`: extreme loads across the stack.
@@ -326,9 +298,7 @@ Each scenario:
 
 1. Sets up state (events, users, environment).  
 2. Drives traffic against the APIs or synthetic stubs.  
-3. Validates metrics (latency, error rates, drift, business KPIs) within tolerances.  
-
-The simulator is also capable of journaling feature snapshots so that auto‑retraining can be tested with **logged features** resembling real production behavior.
+3. Validates metrics (latency, error rates, drift, business KPIs) within tolerances.
 
 ---
 
@@ -337,7 +307,7 @@ The simulator is also capable of journaling feature snapshots so that auto‑ret
 All these components are wired together with a **Pydantic‑based configuration system**:
 
 - Environment variables like `ENVIRONMENT=local` vs `production` flip between local storage (DuckDB, MinIO, local paths) and cloud resources (BigQuery, GCS, etc.).
-- Configuration classes encapsulate connection details for Postgres, Redis, MinIO, Feast, MLflow, and the auto‑training logic.
+- Configuration classes encapsulate connection details for Postgres, Redis, MinIO, Feast, and MLflow.
 
 This means the same codebase can:
 
@@ -352,7 +322,7 @@ A few practical takeaways from building this:
 
 - **Treat features as products.** A feature store isn’t just “nice to have” — it’s how you avoid subtle training/serving skew and “where did this CSV come from?” moments.
 - **Separate concerns.** Let Airflow orchestrate, MLflow track, BentoML serve, and your infra components do what they’re good at. Monoliths are tempting but hard to reason about.
-- **Close the loop.** Monitoring without retraining is passive; retraining without monitoring is blind. You need both to get to a self‑healing system.
+- **Close the loop.** Monitoring without retraining is passive; retraining without monitoring is blind. Drift detection plus scheduled (or triggered) retraining keeps models aligned with production.
 - **Simulate ruthlessly.** A good simulator surfaces failure modes and edge cases long before real users do, especially for fraud where adversaries adapt quickly.
 
 ---
@@ -366,7 +336,7 @@ If you’re running any real‑time ML in production — fraud detection, recomm
 - Define **failure signals** and thresholds that make sense for your business (chargebacks, SLA violations, revenue metrics).  
 - Start simple: one or two DAGs, a single service, and a few dashboards. Then iterate.
 
-The end goal is a platform where your models don’t just ship once — they **continuously learn, adapt, and recover** as the world changes, with minimal manual intervention.
+The end goal is a platform where your models don’t just ship once — they **stay fresh** through monitoring, scheduled retraining, and hot‑reload as the world changes.
 
-If you’re interested, I’m happy to share more details on any part of this stack (Feast design, Airflow DAGs, auto‑retraining logic, or the simulator).
+If you’re interested, I’m happy to share more details on any part of this stack (Feast design, Airflow DAGs, drift detection, or the simulator).
 

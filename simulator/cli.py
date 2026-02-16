@@ -8,7 +8,6 @@ import click
 from simulator.scenarios.black_friday import BlackFridayScenario
 from simulator.scenarios.flash_sale import FlashSaleScenario
 from simulator.scenarios.fraud_attack import FraudAttackScenario
-from simulator.scenarios.fraud_drift_retrain import FraudDriftRetrainScenario
 from simulator.scenarios.gradual_drift import GradualDriftScenario
 from simulator.scenarios.mixed import MixedScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
@@ -21,7 +20,6 @@ SCENARIOS = {
     "flash-sale": FlashSaleScenario,
     "normal-traffic": NormalTrafficScenario,
     "fraud-attack": FraudAttackScenario,
-    "fraud-drift-retrain": FraudDriftRetrainScenario,
     "gradual-drift": GradualDriftScenario,
     "system-degradation": SystemDegradationScenario,
     "black-friday": BlackFridayScenario,
@@ -181,8 +179,7 @@ def mix(duration: int, scenarios: str, output: str) -> None:
 @click.option("--duration", "-d", type=int, default=60, help="Duration in seconds (wall-clock)")
 @click.option("--rps", "-r", type=float, default=100.0, help="Target requests per second")
 @click.option("--output", "-o", default="reports/realtime-report.html", help="Output report file (metrics only)")
-@click.option("--log-features", "-f", is_flag=True, help="Log prediction features to data/training/realtime_features.parquet for auto model training")
-def realtime(scenario_name: str, duration: int, rps: float, output: str, log_features: bool) -> None:
+def realtime(scenario_name: str, duration: int, rps: float, output: str) -> None:
     """Run real-time traffic for a given duration and RPS."""
     from simulator.runners.realtime_runner import RealtimeRunner
     scenario_class = SCENARIOS[scenario_name]
@@ -190,13 +187,10 @@ def realtime(scenario_name: str, duration: int, rps: float, output: str, log_fea
         click.echo("Realtime mode uses normal-traffic generators for mix; use normal-traffic for mixed-style data.")
         scenario_class = SCENARIOS["normal-traffic"]
     click.echo(f"\nRealtime: {scenario_name} (duration={duration}s, rps={rps})")
-    if log_features:
-        click.echo("Feature logging enabled: data will be written to data/training/realtime_features.parquet")
     runner = RealtimeRunner(
         scenario_class=scenario_class,
         duration_seconds=duration,
         rps=rps,
-        log_features=log_features,
     )
     results = runner.run()
     click.echo(f"Completed: {len(results.get('responses', []))} transactions, peak_rps={results.get('peak_rps', 0):.0f}")

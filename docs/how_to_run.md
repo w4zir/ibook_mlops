@@ -139,7 +139,7 @@ docker compose logs -f faust-worker parquet-sink
 
 The **event ticketing simulator** generates realistic traffic (events, users, transactions, fraud patterns) to stress-test the platform under scenarios such as normal traffic, flash sales, fraud attacks, gradual drift, system degradation, and Black Friday. In **realtime mode**, the simulator also produces each transaction to Kafka (`raw.transactions`) so the Faust worker can compute real-time features and the Parquet sink can archive raw events to MinIO.
 
-**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `fraud-drift-retrain`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`.
+**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`.
 
 #### Run via CLI (from repo root, with venv active)
 
@@ -160,17 +160,11 @@ python -m simulator.cli run normal-traffic --dry-run
 # Run all scenarios
 python -m simulator.cli run-all -o reports/
 
-# Run simulator with auto-training (fraud): novel fraud patterns trigger retraining
-python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
-
 # Mix mode: weighted scenarios for N minutes
 python -m simulator.cli mix --duration 30 --scenarios "normal-traffic:40,flash-sale:20,fraud-attack:20,system-degradation:10,black-friday:10" -o reports/mix-report.html
 
 # Realtime: stream at fixed RPS for wall-clock seconds
 python -m simulator.cli realtime normal-traffic --duration 60 --rps 100 -o reports/realtime-report.html
-
-# Realtime with feature logging (writes to data/training/realtime_features.parquet for Airflow auto-training DAG)
-python -m simulator.cli realtime normal-traffic --duration 60 --rps 100 --log-features -o reports/realtime-report.html
 ```
 
 #### Run via Make
@@ -181,7 +175,6 @@ Requires `pip install -e .` and `make` (e.g. WSL / Git Bash):
 make sim-list
 make sim-run scenario=normal-traffic   # writes reports/normal-traffic-report.html
 make sim-run scenario=flash-sale
-make sim-run scenario=fraud-drift-retrain   # auto-training on fraud (novel patterns → retrain)
 make sim-run-all                       # runs all, output to reports/
 make sim-mix                           # mix mode (default 30 min); use duration=10 for 10 min
 make sim-realtime                      # realtime 60s @ 100 rps; use scenario= duration= rps= to override
@@ -200,33 +193,6 @@ Reports are written to the `reports/` directory (or `/app/reports/` inside the c
 
 To run against the live fraud API, ensure `bentoml-fraud` is up and set `API_BASE_URL` (e.g. in the simulator service env: `http://bentoml-fraud:7001`). The simulator can also run offline with synthetic responses.
 
-#### Run simulator with auto-training (fraud model)
-
-The **`fraud-drift-retrain`** scenario injects novel fraud patterns (account takeover, synthetic identity, refund abuse) that the current model does not handle well. The resulting high failure rate can trigger the platform’s auto-training pipeline to retrain the fraud model.
-
-**CLI (from repo root, venv active):**
-
-```bash
-python -m simulator.cli run fraud-drift-retrain -o reports/fraud-drift-retrain-report.html
-# Optional: override duration (minutes)
-python -m simulator.cli run fraud-drift-retrain --duration 15 -o reports/fraud-drift-retrain-report.html
-```
-
-**Make:**
-
-```bash
-make sim-run scenario=fraud-drift-retrain
-```
-
-**Docker Compose:** Use the same simulator overlay; run the scenario in the simulator container:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.simulator.yml run --rm simulator python -m simulator.cli run fraud-drift-retrain -o /app/reports/fraud-drift-retrain-report.html
-```
-
-Ensure the BentoML fraud service and the Airflow DAG `auto_training_on_fraud_rate` are running so that retraining can be triggered when the failure-rate threshold is exceeded.
-
----
 
 ### Feature store and sample data
 
@@ -284,24 +250,14 @@ curl -X POST http://localhost:7001/healthz
 curl -X POST http://localhost:7002/healthz
 ```
 
-**Checking BentoML fraud service and Airflow auto-training:**
+**Checking BentoML fraud service:**
 
-1. **BentoML fraud service**
-   - **Docker:** `docker compose ps` — look for `bentoml-fraud` or `ibook-bentoml-fraud` (port 7001). If the stack is up, the fraud service starts with it.
-   - **Health:**  
-     ```bash
-     curl -X POST http://localhost:7001/healthz -H "Content-Type: application/json" -d "{}"
-     ```  
-     Expect `{"ok": true, "detail": "model_loaded"}` when the service and model are OK.
-   - **Admin stats (for Airflow DAG):** The DAG polls `GET /admin/stats` (or POST per BentoML API) for `failure_rate` and `window_samples`. You can check manually:  
-     ```bash
-     curl -X POST http://localhost:7001/admin/stats -H "Content-Type: application/json" -d "{}"
-     ```
-
-2. **Auto-training (Airflow DAG)**
-   - Auto-training is orchestrated by the **Airflow DAG** `auto_training_on_fraud_rate`, not by a service inside BentoML. Ensure Airflow is running and the DAG is unpaused.
-   - The DAG runs every `AUTO_TRAINING_DAG_INTERVAL_SECONDS` (default 60). It calls the fraud service at `BENTOML_BASE_URL` (or `FRAUD_API_BASE_URL`, default `http://localhost:7001`) for `/admin/stats` and, after a successful retrain, `/admin/reload`.
-   - Optional: run the simulator realtime with `--log-features` to write features to `data/training/realtime_features.parquet` so the DAG can use them for training instead of synthetic data.
+- **Docker:** `docker compose ps` — look for `bentoml-fraud` or `ibook-bentoml-fraud` (port 7001). If the stack is up, the fraud service starts with it.
+- **Health:**  
+  ```bash
+  curl -X POST http://localhost:7001/healthz -H "Content-Type: application/json" -d "{}"
+  ```  
+  Expect `{"ok": true, "detail": "model_loaded"}` when the service and model are OK.
 
 **Example requests (PowerShell):**
 
@@ -314,14 +270,13 @@ curl -X POST http://localhost:7002/recommend -H "Content-Type: application/json"
 
 ### Airflow workflows
 
-With the stack running, open http://localhost:8080 (admin/admin). Four DAGs are under `services/airflow/dags/`:
+With the stack running, open http://localhost:8080 (admin/admin). Three DAGs are under `services/airflow/dags/`:
 
 - **feature_engineering_pipeline** — hourly: read raw events from MinIO (`raw-events` bucket), compute user_realtime_fraud_features (same logic as Faust) and event aggregates, validate, materialize to Feast (including user_realtime_fraud_features when data exists), check drift.
 - **model_training_pipeline** — weekly: build dataset, train XGBoost, evaluate, register in MLflow, promote, then notify BentoML to reload.
-- **auto_training_on_fraud_rate** — runs every N seconds (default 60): polls BentoML `/admin/stats` for failure rate; if threshold is breached, builds training data (from `data/training/realtime_features.parquet` if present, else synthetic), trains model, evaluates quality, registers in MLflow, promotes to Production, then POSTs to BentoML `/admin/reload` to hot-reload the new model.
 - **ml_monitoring_pipeline** — daily: collect metrics, compute drift, check thresholds, alert/retrain stubs.
 
-Unpause each DAG and trigger a run from the UI. Kafka/Evidently/Slack integrations are stubbed for local use. Auto-training interval is set via `AUTO_TRAINING_DAG_INTERVAL_SECONDS`; the DAG uses `BENTOML_BASE_URL` (or `FRAUD_API_BASE_URL`) to reach the fraud service for stats and reload.
+Unpause each DAG and trigger a run from the UI. Kafka/Evidently/Slack integrations are stubbed for local use. The model_training_pipeline uses `BENTOML_BASE_URL` (or `FRAUD_API_BASE_URL`) to reach the fraud service for `/admin/reload` after promotion.
 
 **Note:** The project root is mounted into the Airflow containers as `/opt/airflow/workspace` and `PYTHONPATH` is set to that path so the DAGs can import the `common` package (e.g. `common.feature_utils`, `common.model_utils`). DAGs resolve `data/` paths from the workspace, so parquet files under `data/processed/feast/` and `data/monitoring/` are used when present. Task retries are configurable via env: `AIRFLOW_TASK_RETRIES` (default 3) and per-DAG overrides `FEATURE_ENGINEERING_PIPELINE_RETRIES`, `MODEL_TRAINING_PIPELINE_RETRIES`, `ML_MONITORING_PIPELINE_RETRIES` (set to 0 to fail immediately). See `.env.example`.
 

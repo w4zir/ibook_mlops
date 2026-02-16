@@ -7,15 +7,8 @@ The BentoML-specific decorators are intentionally kept thin; the core request
 handling logic is implemented in pure Python functions so it can be exercised
 directly from unit tests without running a HTTP server.
 
-Failure tracking and auto-training
-----------------------------------
-The service maintains a ``FailureTracker`` that records prediction outcomes
-reported via the ``/feedback`` endpoint. It exposes ``/admin/stats`` with
-failure rate and sample count so the Airflow DAG ``auto_training_on_fraud_rate``
-can poll and decide when to trigger retraining. Model training is only
-triggered by the Airflow DAG; this service does not run training. After the
-DAG trains and promotes a new model, it calls ``/admin/reload`` to hot-reload
-the model in this process.
+The model_training_pipeline Airflow DAG can call ``/admin/reload`` to
+hot-reload the fraud model from MLflow after promoting a new version.
 """
 
 import logging
@@ -40,8 +33,6 @@ from services.bentoml.services.fraud_detection.model import (
     FraudResponse,
     FraudBatchRequest,
     FraudBatchResponse,
-    FraudFeedbackRequest,
-    FraudFeedbackResponse,
     FraudModelRuntime,
 )
 
@@ -83,44 +74,6 @@ def reload_model() -> None:
         logger.info("HOT LOAD: fraud detection model reloaded successfully.")
     except Exception:
         logger.exception("Model hot-reload failed; keeping existing model.")
-
-
-# ---------------------------------------------------------------------------
-# Failure tracking (for /admin/stats; training is triggered by Airflow DAG only)
-# ---------------------------------------------------------------------------
-
-_FAILURE_TRACKER = None
-
-
-def _get_failure_tracker():
-    """Lazy-init the failure tracker. No in-service training; DAG triggers retrain."""
-    global _FAILURE_TRACKER
-    if _FAILURE_TRACKER is not None:
-        return _FAILURE_TRACKER
-
-    from common.config import get_config
-    from services.bentoml.common.failure_tracker import FailureTracker
-
-    cfg = get_config().auto_training
-
-    if not cfg.enabled:
-        return None
-
-    logger.info(
-        "Failure tracking: threshold=%.0f%%, window=%ds, min_samples=%d (retrain via Airflow DAG only)",
-        cfg.failure_rate_threshold * 100,
-        cfg.monitoring_window_seconds,
-        cfg.min_samples,
-    )
-
-    _FAILURE_TRACKER = FailureTracker(
-        window_seconds=cfg.monitoring_window_seconds,
-        failure_rate_threshold=cfg.failure_rate_threshold,
-        cooldown_seconds=cfg.cooldown_seconds,
-        min_samples=cfg.min_samples,
-        on_threshold_breached=None,  # Do not trigger training here; Airflow DAG does it.
-    )
-    return _FAILURE_TRACKER
 
 
 # ---------------------------------------------------------------------------
@@ -242,32 +195,6 @@ def handle_predict(batch: FraudBatchRequest) -> FraudBatchResponse:
     return FraudBatchResponse(predictions=predictions)
 
 
-def handle_feedback(feedback_req: FraudFeedbackRequest) -> FraudFeedbackResponse:
-    """
-    Record ground-truth feedback for past predictions.
-
-    Each feedback item is recorded in the ``FailureTracker`` for /admin/stats.
-    Retraining is triggered only by the Airflow DAG, not by this service.
-    """
-    tracker = _get_failure_tracker()
-    if tracker is not None:
-        for fb in feedback_req.feedbacks:
-            tracker.record(
-                predicted_fraud=fb.predicted_fraud,
-                actual_fraud=fb.actual_fraud,
-            )
-        failure_rate, n_samples = tracker.get_failure_rate()
-    else:
-        failure_rate, n_samples = 0.0, 0
-
-    return FraudFeedbackResponse(
-        accepted=len(feedback_req.feedbacks),
-        failure_rate=failure_rate,
-        window_samples=n_samples,
-        training_triggered=False,  # Only the Airflow DAG triggers training.
-    )
-
-
 def _health_payload(ok: bool, detail: str) -> dict:
     return {"ok": ok, "detail": detail}
 
@@ -286,44 +213,14 @@ def handle_healthcheck() -> dict:
 def handle_admin_reload() -> dict:
     """
     Hot-reload the fraud model from MLflow (push from Airflow).
-    Returns status and optional error detail. Resets the failure tracker
-    so the stats window starts fresh with the new model.
+    Returns status and optional error detail.
     """
     try:
         reload_model()
-        tracker = _get_failure_tracker()
-        if tracker is not None:
-            tracker.reset()
         return {"status": "reloaded"}
     except Exception as exc:
         logger.exception("Admin reload failed.")
         return {"status": "error", "detail": str(exc)}
-
-
-def handle_admin_stats() -> dict:
-    """
-    Expose current failure rate and threshold for Airflow DAG to decide
-    whether to trigger retraining. When auto-training is disabled or
-    FailureTracker not yet initialized, returns zeros and config threshold.
-    """
-    from common.config import get_config
-
-    cfg = get_config().auto_training
-    tracker = _get_failure_tracker()
-    if tracker is not None:
-        failure_rate, window_samples = tracker.get_failure_rate()
-        return {
-            "failure_rate": failure_rate,
-            "window_samples": window_samples,
-            "threshold": cfg.failure_rate_threshold,
-            "training_in_progress": tracker.training_in_progress,
-        }
-    return {
-        "failure_rate": 0.0,
-        "window_samples": 0,
-        "threshold": cfg.failure_rate_threshold,
-        "training_in_progress": False,
-    }
 
 
 svc = None
@@ -345,21 +242,6 @@ if bentoml is not None and JSON is not None:  # pragma: no cover - HTTP layer
                 # Attach a short context note to aid debugging without leaking
                 # internal implementation details to clients.
                 raise RuntimeError(f"fraud_detection.predict failed: {exc}") from exc
-            else:
-                record_request(SERVICE_NAME, endpoint, http_status=200)
-                return response
-
-    @svc.api(input=JSON(pydantic_model=FraudFeedbackRequest), output=JSON(pydantic_model=FraudFeedbackResponse))
-    def feedback(req: FraudFeedbackRequest) -> FraudFeedbackResponse:
-        """Accept ground-truth feedback and track the failure rate."""
-        endpoint = "/feedback"
-        with track_latency(SERVICE_NAME, endpoint):
-            try:
-                response = handle_feedback(req)
-            except Exception as exc:
-                record_error(SERVICE_NAME, endpoint)
-                record_request(SERVICE_NAME, endpoint, http_status=500)
-                raise RuntimeError(f"fraud_detection.feedback failed: {exc}") from exc
             else:
                 record_request(SERVICE_NAME, endpoint, http_status=200)
                 return response
@@ -387,17 +269,3 @@ if bentoml is not None and JSON is not None:  # pragma: no cover - HTTP layer
                 record_error(SERVICE_NAME, endpoint)
                 record_request(SERVICE_NAME, endpoint, http_status=500)
                 return {"status": "error", "detail": str(exc)}
-
-    @svc.api(input=JSON(), output=JSON())
-    def admin_stats(_: dict) -> dict:
-        """POST /admin/stats: failure rate and threshold for Airflow DAG."""
-        endpoint = "/admin/stats"
-        with track_latency(SERVICE_NAME, endpoint):
-            try:
-                payload = handle_admin_stats()
-                record_request(SERVICE_NAME, endpoint, http_status=200)
-                return payload
-            except Exception as exc:
-                record_error(SERVICE_NAME, endpoint)
-                record_request(SERVICE_NAME, endpoint, http_status=500)
-                raise RuntimeError(f"fraud_detection.admin_stats failed: {exc}") from exc
