@@ -2,7 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Pin aiokafka to 0.10.x: faust-streaming 0.11 expects aiokafka>=0.10; 0.11+ has API changes
 RUN pip install --no-cache-dir \
+    "aiokafka>=0.10.0,<0.11.0" \
     "faust-streaming[rocksdb]>=0.11.0" \
     "feast[redis]>=0.40.0" \
     pandas

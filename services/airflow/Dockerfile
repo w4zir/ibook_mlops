@@ -15,11 +15,12 @@ COPY . /opt/airflow/ibook-mlops
 RUN chown -R 50000:0 /opt/airflow
 
 # Install as airflow user (base image rejects pip run as root).
+# Use long timeout for large wheels (xgboost, pyarrow) to avoid ReadTimeoutError on slow networks.
 USER airflow
-RUN pip install --no-cache-dir -r /opt/airflow/requirements-dags.txt
+RUN pip install --no-cache-dir --timeout 600 -r /opt/airflow/requirements-dags.txt
 
 WORKDIR /opt/airflow/ibook-mlops
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --timeout 600 -e .
 
 # Put DAGs and plugins in conventional Airflow locations.
 RUN mkdir -p /opt/airflow/dags /opt/airflow/plugins && \

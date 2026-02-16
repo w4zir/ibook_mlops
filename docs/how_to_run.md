@@ -6,9 +6,9 @@ This repo covers the full MLOps platform: local service stack, Feast feature sto
 
 ### Quick Start (TL;DR)
 
-From repo root (PowerShell):
+From repo root (PowerShell; use `;` between commands, not `&&`):
 
-```bash
+```powershell
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
 .venv\Scripts\pip install -e .
@@ -57,9 +57,9 @@ Notes:
 
 ### Start the local stack
 
-**PowerShell:**
+**PowerShell** (run from repo root; if you see conda/pydantic errors, they are from your host Python and can be ignored):
 
-```bash
+```powershell
 docker compose up -d --build
 docker compose ps
 ```

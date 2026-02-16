@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 WORKDIR /workspace
 
@@ -10,7 +10,7 @@ RUN apt-get update \
 # Install Python deps first (cached unless requirements change)
 COPY requirements.txt requirements.txt
 COPY requirements-dev.txt requirements-dev.txt
-RUN pip install --no-cache-dir --upgrade pip \
+RUN pip install --no-cache-dir --upgrade pip setuptools \
     && pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt \
     && pip uninstall -y multipart || true \
     && pip install --no-cache-dir --force-reinstall python-multipart
