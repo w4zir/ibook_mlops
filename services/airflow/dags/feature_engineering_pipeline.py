@@ -1,24 +1,23 @@
 from __future__ import annotations
 
 """
-Airflow DAG for Phase 5: feature engineering pipeline.
-
-This DAG is intentionally lightweight but shaped like a real production workflow:
+Airflow DAG: feature engineering pipeline.
 
 - Runs hourly.
-- Stubs out Kafka ingestion and drift detection.
-- Uses simple pandas-based aggregation on the local synthetic Feast data, when present.
-- Touches the Feast repo via `common.feature_utils` to keep the contract realistic.
-
-All external integrations are safe no-ops or best‑effort operations so the DAG can
-be parsed and exercised in unit tests without requiring running services.
+- Reads raw events from MinIO (s3://raw-events/transactions/) and computes
+  user_realtime_fraud_features (same aggregation logic as Faust worker) for
+  offline store and training.
+- Uses simple pandas-based aggregation on local synthetic Feast data for
+  event-level features when present.
+- Materializes to Feast (healthcheck + user_realtime_fraud_features when data exists).
+- Drift detection and training trigger are stubs.
 """
 
-from datetime import datetime, timedelta
+import logging
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-
-import logging
 
 import pandas as pd
 from airflow import DAG
@@ -41,13 +40,87 @@ logger = logging.getLogger(__name__)
 
 def _extract_realtime_events(**_: Any) -> None:
     """
-    Stub for Kafka/event-stream ingestion.
+    Read raw transaction events from MinIO (raw-events bucket), compute
+    per-user aggregates aligned with Faust (user_txn_count_1h, user_txn_amount_1h,
+    user_distinct_events_1h, user_avg_amount_24h), write to user_realtime_features.parquet.
 
-    In a real deployment this would consume from Kafka and write raw events into
-    a landing table or object storage. For Phase 5 we simply log that the step
-    ran so that the DAG topology is realistic without external dependencies.
+    If MinIO is unavailable or the bucket is empty, log and skip (no failure).
     """
-    logging.info("Extracting real-time events from Kafka (stub only for Phase 5).")
+    import io
+
+    try:
+        import boto3
+    except ImportError:
+        logger.warning("boto3 not available; skipping MinIO raw-events read.")
+        return
+
+    endpoint = os.environ.get("AWS_S3_ENDPOINT_URL") or os.environ.get("MLFLOW_S3_ENDPOINT_URL") or "http://localhost:9000"
+    bucket = os.environ.get("RAW_EVENTS_BUCKET", "raw-events")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
+
+    try:
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        )
+        prefix = "transactions/"
+        paginator = client.get_paginator("list_objects_v2")
+        keys = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents") or []:
+                k = obj.get("Key")
+                if k and k.endswith(".parquet"):
+                    keys.append(k)
+        if not keys:
+            logger.info("No Parquet files under s3://%s/%s; skipping user_realtime_features.", bucket, prefix)
+            return
+
+        dfs = []
+        for key in keys:
+            buf = io.BytesIO()
+            client.download_fileobj(bucket, key, buf)
+            buf.seek(0)
+            dfs.append(pd.read_parquet(buf))
+        raw = pd.concat(dfs, ignore_index=True)
+    except Exception as e:
+        logger.warning("Failed to read raw events from MinIO (bucket=%s): %s; skipping.", bucket, e)
+        return
+
+    if raw.empty:
+        logger.info("Raw events DataFrame is empty; skipping user_realtime_features.")
+        return
+
+    # Require columns from simulator transaction schema
+    for col in ("user_id", "event_id", "total_amount"):
+        if col not in raw.columns:
+            logger.warning("Raw events missing column %s; skipping user_realtime_features.", col)
+            return
+
+    # Same aggregations as Faust worker (offline/historical version)
+    agg = raw.groupby("user_id").agg(
+        user_txn_count_1h=("user_id", "count"),
+        user_txn_amount_1h=("total_amount", "sum"),
+        user_distinct_events_1h=("event_id", "nunique"),
+    ).reset_index()
+    agg["user_avg_amount_24h"] = agg["user_txn_amount_1h"] / agg["user_txn_count_1h"].clip(lower=1)
+    agg["event_timestamp"] = pd.Timestamp.utcnow()
+    agg["ingested_at"] = pd.Timestamp.utcnow()
+
+    out_path = DATA_DIR / "user_realtime_features.parquet"
+    fallback_dir = Path("/opt/airflow/data/processed/feast")
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        agg.to_parquet(out_path, index=False)
+        logger.info("Wrote user_realtime_features to %s (%d rows).", out_path, len(agg))
+    except OSError as write_err:
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        fallback_path = fallback_dir / "user_realtime_features.parquet"
+        agg.to_parquet(fallback_path, index=False)
+        logger.info("Wrote user_realtime_features to fallback %s (%d rows).", fallback_path, len(agg))
 
 
 def _compute_batch_features(**_: Any) -> None:
@@ -187,10 +260,8 @@ def _validate_features(**_: Any) -> None:
 
 def _materialize_to_feast(**_: Any) -> None:
     """
-    Touch the Feast feature store to ensure configuration is healthy.
-
-    We intentionally keep this to a metadata-level healthcheck so that the task
-    is fast and safe in local environments.
+    Feast healthcheck and, when user_realtime_features.parquet exists,
+    materialize user_realtime_fraud_features from batch source to online store.
     """
     info = feature_store_healthcheck()
     logging.info(
@@ -199,6 +270,21 @@ def _materialize_to_feast(**_: Any) -> None:
         info["feature_view_count"],
         ", ".join(info["feature_view_names"]),
     )
+
+    user_realtime_path = DATA_DIR / "user_realtime_features.parquet"
+    fallback_path = Path("/opt/airflow/data/processed/feast/user_realtime_features.parquet")
+    path_to_use = user_realtime_path if user_realtime_path.exists() else (fallback_path if fallback_path.exists() else None)
+    if path_to_use and "user_realtime_fraud_features" in info["feature_view_names"]:
+        try:
+            from common.feature_utils import get_feature_store
+
+            fs = get_feature_store()
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(days=1)
+            fs.materialize(feature_views=["user_realtime_fraud_features"], start_date=start, end_date=end)
+            logging.info("Materialized user_realtime_fraud_features to online store.")
+        except Exception as e:
+            logging.warning("Materialize user_realtime_fraud_features failed (non-fatal): %s", e)
 
 
 def _check_for_drift(**_: Any) -> bool:

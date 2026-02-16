@@ -1,4 +1,4 @@
-.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento sim-list sim-run sim-run-all sim-mix sim-realtime sim-stop
+.PHONY: setup start stop restart logs seed-data feast-apply test clean format deploy-prod serve-fraud serve-pricing serve-bento stream-start stream-logs sim-list sim-run sim-run-all sim-mix sim-realtime sim-stop
 
 PYTHON ?= python
 
@@ -39,6 +39,12 @@ serve-pricing:
 	@docker compose up -d bentoml-pricing
 
 serve-bento: serve-fraud serve-pricing
+
+stream-start:
+	@docker compose up -d faust-worker parquet-sink
+
+stream-logs:
+	@docker compose logs -f faust-worker parquet-sink
 
 clean:
 	@docker compose down -v

@@ -96,14 +96,48 @@ docker compose down -v
 | **BentoML pricing** | http://localhost:7002 | Dynamic pricing API |
 | **PostgreSQL** | localhost:5432 | Airflow + MLflow metadata (user: `ibook`) |
 | **Redis** | localhost:6379 | Feast online store |
-| **Kafka** | localhost:9092 | Event streaming (DAGs use stubs locally) |
+| **Kafka** | localhost:9092 | Event streaming. Host access: `localhost:9092`; from other containers use `kafka:29092`. |
 | **Zookeeper** | localhost:2181 | Kafka coordination |
+| **Faust worker** | (no port) | Consumes Kafka, pushes real-time features to Feast; internal service. |
+| **Parquet sink** | (no port) | Consumes Kafka, writes Parquet to MinIO `raw-events`; internal service. |
+
+---
+
+### Streaming Pipeline
+
+The simulator (realtime mode) produces each transaction to **Kafka** as well as to the BentoML fraud API. Two services consume from Kafka:
+
+- **Faust worker** — maintains per-user aggregates and writes to the Feast online store (Redis).
+- **Parquet sink** — batches events and writes Parquet files to MinIO (`raw-events` bucket).
+
+**Start only the streaming components:**
+
+```bash
+make stream-start
+# or
+docker compose up -d faust-worker parquet-sink
+```
+
+**View streaming logs:**
+
+```bash
+make stream-logs
+# or
+docker compose logs -f faust-worker parquet-sink
+```
+
+**Verify events are flowing:**
+
+- MinIO console: http://localhost:9001 — check bucket `raw-events` for `transactions/dt=YYYY-MM-DD/*.parquet`.
+- After running the simulator in realtime mode with Kafka reachable, the Faust worker will push features to Redis; the fraud service can use `user_realtime_fraud_features` from the online store.
+
+**Full stack (including streaming):** `docker compose up -d --build` starts Kafka, Faust worker, and Parquet sink along with the rest. Ensure `kafka-init` has run (it creates the `raw.transactions` topic) and MinIO has the `raw-events` bucket (created by `minio-init`).
 
 ---
 
 ### Simulator
 
-The **event ticketing simulator** generates realistic traffic (events, users, transactions, fraud patterns) to stress-test the platform under scenarios such as normal traffic, flash sales, fraud attacks, gradual drift, system degradation, and Black Friday.
+The **event ticketing simulator** generates realistic traffic (events, users, transactions, fraud patterns) to stress-test the platform under scenarios such as normal traffic, flash sales, fraud attacks, gradual drift, system degradation, and Black Friday. In **realtime mode**, the simulator also produces each transaction to Kafka (`raw.transactions`) so the Faust worker can compute real-time features and the Parquet sink can archive raw events to MinIO.
 
 **Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `fraud-drift-retrain`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`.
 
@@ -282,7 +316,7 @@ curl -X POST http://localhost:7002/recommend -H "Content-Type: application/json"
 
 With the stack running, open http://localhost:8080 (admin/admin). Four DAGs are under `services/airflow/dags/`:
 
-- **feature_engineering_pipeline** — hourly: aggregate features, validate, materialize to Feast, check drift.
+- **feature_engineering_pipeline** — hourly: read raw events from MinIO (`raw-events` bucket), compute user_realtime_fraud_features (same logic as Faust) and event aggregates, validate, materialize to Feast (including user_realtime_fraud_features when data exists), check drift.
 - **model_training_pipeline** — weekly: build dataset, train XGBoost, evaluate, register in MLflow, promote, then notify BentoML to reload.
 - **auto_training_on_fraud_rate** — runs every N seconds (default 60): polls BentoML `/admin/stats` for failure rate; if threshold is breached, builds training data (from `data/training/realtime_features.parquet` if present, else synthetic), trains model, evaluates quality, registers in MLflow, promotes to Production, then POSTs to BentoML `/admin/reload` to hot-reload the new model.
 - **ml_monitoring_pipeline** — daily: collect metrics, compute drift, check thresholds, alert/retrain stubs.

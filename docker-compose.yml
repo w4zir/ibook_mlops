@@ -63,13 +63,16 @@ services:
       # Always use Docker service name; .env may set localhost for host-side access
       MINIO_ENDPOINT: http://minio:9000
       MINIO_BUCKET: ${MINIO_BUCKET:-mlflow}
+      RAW_EVENTS_BUCKET: ${RAW_EVENTS_BUCKET:-raw-events}
     entrypoint:
       - sh
       - -c
       - |
         for i in 1 2 3 4 5 6 7 8 9 10; do
           if mc alias set local "$${MINIO_ENDPOINT}" "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" 2>/dev/null; then
-            mc mb --ignore-existing "local/$${MINIO_BUCKET}" && exit 0
+            mc mb --ignore-existing "local/$${MINIO_BUCKET}"
+            mc mb --ignore-existing "local/$${RAW_EVENTS_BUCKET}"
+            exit 0
           fi
           echo "Waiting for MinIO API... attempt $$i/10"
           sleep 2
@@ -122,6 +125,10 @@ services:
       MODEL_TRAINING_PIPELINE_RETRIES: "${MODEL_TRAINING_PIPELINE_RETRIES:-}"
       ML_MONITORING_PIPELINE_RETRIES: "${ML_MONITORING_PIPELINE_RETRIES:-}"
       BENTOML_BASE_URL: ${BENTOML_BASE_URL:-http://bentoml-fraud:7001}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+      RAW_EVENTS_BUCKET: ${RAW_EVENTS_BUCKET:-raw-events}
       _AIRFLOW_WWW_USER_USERNAME: admin
       _AIRFLOW_WWW_USER_PASSWORD: admin
     ports:
@@ -159,6 +166,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       BENTOML_BASE_URL: ${BENTOML_BASE_URL:-http://bentoml-fraud:7001}
+      RAW_EVENTS_BUCKET: ${RAW_EVENTS_BUCKET:-raw-events}
     volumes:
       - ./services/airflow/dags:/opt/airflow/dags:ro
       - ./services/airflow/plugins:/opt/airflow/plugins:ro
@@ -179,14 +187,84 @@ services:
     container_name: ibook-kafka
     depends_on:
       - zookeeper
-    ports:
-      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # Expose two listeners:
+      # - PLAINTEXT://localhost:9092 for host access
+      # - INTERNAL://kafka:29092 for other containers
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: ibook-kafka-init
+    depends_on:
+      kafka:
+        condition: service_started
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "Waiting for Kafka broker at kafka:29092..."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          /usr/bin/kafka-topics --bootstrap-server kafka:29092 --list >/dev/null 2>&1 && break
+          echo "Kafka not ready yet (attempt $$i/10); sleeping..."
+          sleep 5
+        done
+        echo "Creating topic raw.transactions (if not exists)..."
+        /usr/bin/kafka-topics \
+          --bootstrap-server kafka:29092 \
+          --create \
+          --if-not-exists \
+          --topic raw.transactions \
+          --partitions 3 \
+          --replication-factor 1 || true
+        echo "Kafka topic initialization complete."
+
+  parquet-sink:
+    build:
+      context: .
+      dockerfile: services/parquet_sink/Dockerfile
+    container_name: ibook-parquet-sink
+    depends_on:
+      kafka:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_RAW_TOPIC: raw.transactions
+      KAFKA_GROUP_ID: parquet-sink
+      PARQUET_SINK_BATCH_SIZE: "500"
+      PARQUET_SINK_FLUSH_INTERVAL_SEC: "30"
+      RAW_EVENTS_BUCKET: ${RAW_EVENTS_BUCKET:-raw-events}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+
+  faust-worker:
+    build:
+      context: .
+      dockerfile: services/faust_worker/Dockerfile
+    container_name: ibook-faust-worker
+    depends_on:
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_RAW_TOPIC: raw.transactions
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      FEAST_REPO_PATH: /app/services/feast/feature_repo
+      FAUST_PUSH_INTERVAL_SEC: "30"
 
   prometheus:
     image: prom/prometheus:v2.49.1

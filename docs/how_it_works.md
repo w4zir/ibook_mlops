@@ -60,11 +60,47 @@ flowchart TB
 | **PostgreSQL** | Shared by Airflow (DAG metadata, task state) and MLflow (experiments, runs, model registry). Databases: `airflow`, `mlflow`. |
 | **Redis** | Feast online store: low-latency feature lookup for real-time prediction. |
 | **MinIO** | S3-compatible object storage; MLflow stores model artifacts and SHAP outputs here. |
-| **Kafka + Zookeeper** | Event streaming. Used by the feature engineering DAG in production; locally the pipeline uses stubs. |
+| **Kafka + Zookeeper** | Primary event bus. Topic `raw.transactions` receives raw transaction events from the simulator. Dual listeners: `localhost:9092` (host), `kafka:29092` (containers). |
+| **Faust worker** | Consumes `raw.transactions`, maintains per-user rolling aggregates, pushes to Feast online store (Redis) via `write_to_online_store`. |
+| **Parquet sink** | Consumes `raw.transactions`, batches events, writes Parquet to MinIO `raw-events` bucket (`transactions/dt=YYYY-MM-DD/`) for long-term history. |
 
 ---
 
-## 3. Feature Store (Feast)
+## 3. Streaming Data Pipeline
+
+Raw events flow from the simulator into Kafka as the primary event log. Two consumers run independently:
+
+```mermaid
+flowchart LR
+    subgraph sim [Simulator]
+        Txn[Transaction Generator]
+    end
+    subgraph kafka [Kafka]
+        Topic[raw.transactions]
+    end
+    subgraph realtime [Real-time]
+        Faust[Faust Worker]
+        Redis[(Redis / Feast Online)]
+    end
+    subgraph landing [Landing]
+        Sink[Parquet Sink]
+        MinIO[(MinIO raw-events)]
+    end
+    Txn -->|produce| Topic
+    Topic --> Faust
+    Topic --> Sink
+    Faust -->|write_to_online_store| Redis
+    Sink -->|Parquet| MinIO
+```
+
+- **Kafka:** Topic `raw.transactions` is created by `kafka-init`. The simulator (realtime runner) produces each transaction as JSON, keyed by `user_id`.
+- **Faust worker:** Consumes from `raw.transactions`, maintains a per-user table (count, amount sum, distinct event_ids). Every `FAUST_PUSH_INTERVAL_SEC` (default 30s) it builds a DataFrame with `user_txn_count_1h`, `user_txn_amount_1h`, `user_distinct_events_1h`, `user_avg_amount_24h` and calls `fs.write_to_online_store("user_realtime_fraud_features", df=df)` so the fraud service can read sub-second fresh features from Redis.
+- **Parquet sink:** Buffers messages (batch size and flush interval configurable), converts each batch to Parquet, and uploads to `s3://raw-events/transactions/dt=YYYY-MM-DD/batch_{timestamp}.parquet`.
+- **Online–offline parity:** The same aggregation logic (txn count, amount sum, distinct events, avg amount) is implemented in the Faust worker (real-time) and in the Airflow feature-engineering DAG (batch from MinIO). Feast feature view `user_realtime_fraud_features` backs both.
+
+---
+
+## 4. Feature Store (Feast)
 
 **Location:** `services/feast/feature_repo/`
 
@@ -81,6 +117,7 @@ flowchart TB
 - **event_realtime_metrics** — current_inventory, sell_through_rate_5min, concurrent_viewers (TTL 60 min).
 - **event_historical_metrics** — total_tickets_sold, avg_ticket_price, promoter_success_rate (TTL 365 days).
 - **user_purchase_behavior** — lifetime_purchases, fraud_risk_score, preferred_category (TTL 365 days).
+- **user_realtime_fraud_features** — user_txn_count_1h, user_txn_amount_1h, user_distinct_events_1h, user_avg_amount_24h (TTL 2 h). Populated by the Faust worker (online) and by the Airflow DAG from MinIO raw events (offline).
 
 **Online vs offline:** Online = Redis (low-latency serving). Offline = DuckDB (local) or BigQuery (production) for historical training datasets.
 
@@ -102,7 +139,7 @@ Training datasets use **historical retrieval** with an entity DataFrame that inc
 
 ---
 
-## 4. Model Training Pipeline
+## 5. Model Training Pipeline
 
 **Algorithm:** XGBoost binary classifier for fraud detection (objective: `binary:logistic`).
 
@@ -147,7 +184,7 @@ FUNCTION train_fraud_model(df, target_column, n_trials=5, test_size=0.2):
 
 ---
 
-## 5. Model Serving (BentoML)
+## 6. Model Serving (BentoML)
 
 ### 5.1 Fraud Detection Service (port 7001)
 
@@ -205,7 +242,7 @@ FUNCTION recommend_price(request, features_row):
 
 ---
 
-## 6. Drift Detection and Retraining
+## 7. Drift Detection and Retraining
 
 **Implementation:** `common/monitoring_utils.py` — Evidently AI `DataDriftPreset` when available; otherwise a statistical fallback.
 
@@ -235,7 +272,7 @@ flowchart LR
     Check --> Retrain[trigger_retraining]
 ```
 
-### 6.1 Auto-Training on Failure Rate (Airflow DAG + BentoML)
+### 7.1 Auto-Training on Failure Rate (Airflow DAG + BentoML)
 
 In addition to the batch-oriented Airflow monitoring, the platform supports **auto-retraining** triggered by prediction failure rate. An **Airflow DAG** (`auto_training_on_fraud_rate`) periodically checks the failure rate exposed by the BentoML fraud service; when the rate breaches a threshold, the DAG builds a training dataset, trains a new model, registers it in MLflow, promotes to Production, and triggers a hot-reload in BentoML. This gives a closed loop with no in-service training logic: orchestration is centralized in Airflow.
 
@@ -298,7 +335,7 @@ DAG interval (Airflow): `AUTO_TRAINING_DAG_INTERVAL_SECONDS` (default 60). Bento
 
 ---
 
-## 7. Orchestration (Airflow)
+## 8. Orchestration (Airflow)
 
 Four DAGs live under `services/airflow/dags/`.
 
@@ -315,11 +352,11 @@ flowchart LR
     MaybeTrain --> End1[end]
 ```
 
-- Extract: Kafka consumption (stubbed locally).
-- Compute: Aggregates to e.g. `data/processed/feast/event_aggregates.parquet`.
-- Validate: Basic data checks (Great Expectations stubbed).
-- Materialize: Write to Feast.
-- Drift check and maybe_trigger_training: Conditional retraining path (stub).
+- **Extract:** Reads raw transaction Parquet files from MinIO (`s3://raw-events/transactions/`), computes per-user aggregates (same logic as Faust: user_txn_count_1h, user_txn_amount_1h, user_distinct_events_1h, user_avg_amount_24h), writes `user_realtime_features.parquet` for offline/training. If MinIO is unavailable or empty, the task logs and skips without failing.
+- **Compute:** Aggregates synthetic Feast data to e.g. `data/processed/feast/event_aggregates.parquet` when present.
+- **Validate:** Basic data checks (Great Expectations stubbed).
+- **Materialize:** Feast healthcheck; if `user_realtime_features.parquet` exists, materializes `user_realtime_fraud_features` to the online store.
+- **Drift check** and **maybe_trigger_training:** Conditional retraining path (stub).
 
 **model_training_pipeline (weekly):**
 
@@ -357,11 +394,11 @@ flowchart LR
 
 Tasks: poll BentoML `/admin/stats` → if threshold breached, build dataset (realtime_features.parquet or synthetic) → train → quality gates → register & promote in MLflow → POST `/admin/reload` to BentoML. See section 6.1.
 
-**ml_monitoring_pipeline (daily):** See section 6 (collect → compute drift → check thresholds → send_alerts, trigger_retraining).
+**ml_monitoring_pipeline (daily):** See section 7 (collect → compute drift → check thresholds → send_alerts, trigger_retraining).
 
 ---
 
-## 8. Simulator
+## 9. Simulator
 
 The simulator generates realistic ticketing traffic (events, users, transactions, fraud patterns) to stress-test the platform.
 
@@ -440,7 +477,7 @@ FUNCTION execute():
 
 ---
 
-## 9. Configuration System
+## 10. Configuration System
 
 **Location:** `common/config.py`
 
@@ -451,6 +488,7 @@ FUNCTION execute():
 - **PostgresConfig** — host, port, user, password, database names (airflow, mlflow).
 - **RedisConfig** — host, port, password (optional).
 - **MinioConfig** — endpoint, access key, secret key, bucket.
+- **KafkaConfig** — bootstrap_servers (e.g. localhost:9092 or kafka:29092), raw_transactions_topic.
 - **FeastConfig** — offline store type, DuckDB path or BigQuery dataset.
 - **MlflowConfig** — tracking_uri, artifact root.
 - **AirflowConfig** — webserver URL.

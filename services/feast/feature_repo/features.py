@@ -9,6 +9,7 @@ from common.config import get_config
 from services.feast.feature_repo.data_sources import (
     get_event_metrics_source,
     get_user_metrics_source,
+    get_user_realtime_source,
 )
 
 
@@ -22,6 +23,7 @@ promoter = Entity(name="promoter", join_keys=["promoter_id"])
 
 _event_source = get_event_metrics_source(_cfg)
 _user_source = get_user_metrics_source(_cfg)
+_user_realtime_source = get_user_realtime_source(_cfg)
 
 
 event_realtime_metrics = FeatureView(
@@ -66,9 +68,29 @@ user_purchase_behavior = FeatureView(
 )
 
 
+user_realtime_fraud_features = FeatureView(
+    name="user_realtime_fraud_features",
+    entities=[user],
+    ttl=timedelta(hours=2),
+    schema=[
+        Field(name="user_txn_count_1h", dtype=Int64),
+        Field(name="user_txn_amount_1h", dtype=Float32),
+        Field(name="user_distinct_events_1h", dtype=Int64),
+        Field(name="user_avg_amount_24h", dtype=Float32),
+    ],
+    online=True,
+    source=_user_realtime_source,
+)
+
+
 # Backward compatibility: newer Feast stores the datasource on `batch_source`
 # while older code/tests expect `.source`.
-for _fv in (event_realtime_metrics, event_historical_metrics, user_purchase_behavior):
+for _fv in (
+    event_realtime_metrics,
+    event_historical_metrics,
+    user_purchase_behavior,
+    user_realtime_fraud_features,
+):
     if not hasattr(_fv, "source"):
         _fv.source = _fv.batch_source
 
@@ -80,5 +102,6 @@ __all__ = [
     "event_realtime_metrics",
     "event_historical_metrics",
     "user_purchase_behavior",
+    "user_realtime_fraud_features",
 ]
 

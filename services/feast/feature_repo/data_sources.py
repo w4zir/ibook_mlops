@@ -93,3 +93,31 @@ def get_user_metrics_source(cfg: Optional[AppConfig] = None) -> DataSource:
         created_timestamp_column="ingested_at",
     )
 
+
+def get_user_realtime_source(cfg: Optional[AppConfig] = None) -> DataSource:
+    """
+    Source for user-level real-time fraud features (Faust-computed; offline backing).
+
+    The Faust worker writes to the online store; the Airflow DAG writes this Parquet
+    from MinIO raw events for offline/training. Locally points to that file.
+    """
+    cfg = cfg or get_config()
+
+    if _use_bigquery(cfg) and BigQuerySource is not None:
+        dataset = cfg.feast.bigquery_dataset
+        assert dataset is not None
+        return BigQuerySource(
+            name="user_realtime_bq",
+            table=f"{dataset}.user_realtime_fraud_features",
+            timestamp_field="event_timestamp",
+            created_timestamp_column="ingested_at",
+        )
+
+    _ensure_local_paths()
+    return FileSource(
+        name="user_realtime_file",
+        path=str(_FEAST_DATA_DIR / "user_realtime_features.parquet"),
+        timestamp_field="event_timestamp",
+        created_timestamp_column="ingested_at",
+    )
+

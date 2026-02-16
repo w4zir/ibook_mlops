@@ -13,6 +13,8 @@ from simulator.config import UserPersona, config
 from simulator.scenarios.base_scenario import BaseScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
 
+from services.kafka.producer import send_raw_transaction
+
 logger = logging.getLogger(__name__)
 
 _should_stop = False
@@ -105,6 +107,13 @@ class RealtimeRunner:
             user = random.choice(users)
             persona = UserPersona(user["persona"]) if isinstance(user.get("persona"), str) else UserPersona.CASUAL
             txn = txn_gen.generate_transaction(event, user, persona, datetime.now())
+            try:
+                # Always emit the raw transaction to Kafka as the primary event log.
+                # Failures here are logged inside the producer wrapper and do not
+                # prevent us from calling the fraud API.
+                send_raw_transaction(txn)
+            except Exception as e:  # pragma: no cover - best-effort logging
+                logger.debug("Failed to send transaction to Kafka: %s", e)
             try:
                 resp = self._send_request(txn)
             except Exception as e:

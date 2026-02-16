@@ -44,6 +44,19 @@ class MinioConfig(BaseModel):
     bucket: str = Field(default="mlflow")
 
 
+class KafkaConfig(BaseModel):
+    """
+    Kafka broker and topic configuration.
+
+    By default we talk to localhost:9092 when running on the host. Inside
+    Docker, set KAFKA_BOOTSTRAP_SERVERS=kafka:29092 so containers reach
+    the internal listener advertised by the Kafka service.
+    """
+
+    bootstrap_servers: str = Field(default="localhost:9092")
+    raw_transactions_topic: str = Field(default="raw.transactions")
+
+
 class FeastConfig(BaseModel):
     offline_store: Literal["duckdb", "bigquery"] = Field(default="duckdb")
     duckdb_path: str = Field(default="data/processed/feast_offline.duckdb")
@@ -126,6 +139,7 @@ class AppConfig(BaseModel):
     postgres: PostgresConfig = Field(default_factory=PostgresConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     minio: MinioConfig = Field(default_factory=MinioConfig)
+    kafka: KafkaConfig = Field(default_factory=KafkaConfig)
 
     feast: FeastConfig = Field(default_factory=FeastConfig)
     mlflow: MlflowConfig = Field(default_factory=MlflowConfig)
@@ -216,6 +230,12 @@ def load_config(env_file: Optional[str] = None) -> AppConfig:
         bucket=_from_env("MINIO_", "BUCKET", "mlflow") or "mlflow",
     )
 
+    kafka = KafkaConfig(
+        bootstrap_servers=_from_env("KAFKA_", "BOOTSTRAP_SERVERS", "localhost:9092") or "localhost:9092",
+        raw_transactions_topic=_from_env("KAFKA_", "RAW_TRANSACTIONS_TOPIC", "raw.transactions")
+        or "raw.transactions",
+    )
+
     feast = FeastConfig(
         offline_store=(os.getenv("FEAST_OFFLINE_STORE", "duckdb") or "duckdb").strip().lower(),  # type: ignore[arg-type]
         duckdb_path=_from_env("FEAST_", "DUCKDB_PATH", "data/processed/feast_offline.duckdb")
@@ -247,6 +267,7 @@ def load_config(env_file: Optional[str] = None) -> AppConfig:
             postgres=postgres,
             redis=redis,
             minio=minio,
+            kafka=kafka,
             feast=feast,
             mlflow=mlflow,
             airflow=airflow,
