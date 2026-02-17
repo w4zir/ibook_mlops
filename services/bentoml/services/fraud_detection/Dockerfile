@@ -8,12 +8,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (cached unless requirements change)
+# setuptools must be present so pkg_resources is available (required by fs -> bentoml)
 COPY requirements.txt requirements.txt
 COPY requirements-dev.txt requirements-dev.txt
-RUN pip install --no-cache-dir --upgrade pip setuptools \
+RUN pip install --no-cache-dir --upgrade pip "setuptools<81" \
     && pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt \
     && pip uninstall -y multipart || true \
-    && pip install --no-cache-dir --force-reinstall python-multipart
+    && pip install --no-cache-dir --force-reinstall python-multipart \
+    && pip install --no-cache-dir --force-reinstall "setuptools<81"
 
 # Copy application code (changes here don't invalidate pip cache)
 COPY . /workspace
