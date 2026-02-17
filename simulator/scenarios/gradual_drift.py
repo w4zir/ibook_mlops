@@ -13,13 +13,45 @@ from simulator.scenarios.base_scenario import BaseScenario
 
 logger = logging.getLogger(__name__)
 
+# Columns used by DriftValidator; shifting these ensures pipeline drift threshold (0.30) is exceeded.
+DRIFT_NUMERIC_COLUMNS = ["total_amount", "num_tickets", "price_per_ticket"]
+
+# Default multiplier so drift_score reliably >= 0.30 (pipeline retrain trigger).
+DEFAULT_DRIFT_STRENGTH = 1.8
+
+
+def _apply_drift_shift(
+    data: List[Dict[str, Any]],
+    strength: float,
+    numeric_columns: List[str],
+) -> None:
+    """Apply multiplicative shift to numeric columns in-place so drift score exceeds threshold."""
+    if strength <= 1.0 or not data:
+        return
+    for row in data:
+        for col in numeric_columns:
+            if col not in row or row[col] is None:
+                continue
+            val = row[col]
+            if isinstance(val, (int, float)):
+                shifted = val * strength
+                row[col] = round(shifted, 2) if isinstance(val, float) else max(1, int(round(shifted)))
+
 
 class GradualDriftScenario(BaseScenario):
-    """Simulate seasonal/user behavior drift over time - validates drift detection."""
+    """Simulate seasonal/user behavior drift over time - validates drift detection.
+
+    Applies an intentional distribution shift to current_data so that the monitoring
+    pipeline's drift check (threshold 0.30) fails and model retraining is triggered.
+    """
 
     DEFAULT_DURATION_MINUTES = 5
 
-    def __init__(self, duration_minutes: int | None = None) -> None:
+    def __init__(
+        self,
+        duration_minutes: int | None = None,
+        drift_strength: float | None = None,
+    ) -> None:
         mins = duration_minutes if duration_minutes is not None else self.DEFAULT_DURATION_MINUTES
         super().__init__(
             name="Gradual Drift",
@@ -30,6 +62,7 @@ class GradualDriftScenario(BaseScenario):
                 "weeks_simulated": 4,
             },
         )
+        self.drift_strength = drift_strength if drift_strength is not None else DEFAULT_DRIFT_STRENGTH
         self.events: List[Dict[str, Any]] = []
         self.users: List[Dict[str, Any]] = []
         self.event_gen = EventGenerator()
@@ -49,6 +82,8 @@ class GradualDriftScenario(BaseScenario):
 
     def run(self) -> None:
         logger.info("Generating drifted data (simulated weeks)...")
+        # Fixed seed so drift score is reproducible and reliably above threshold.
+        random.seed(42)
         effective = self.get_effective_duration_minutes()
         scale = effective / self.DEFAULT_DURATION_MINUTES
         weeks = min(12, max(1, int(4 * scale)))
@@ -66,6 +101,12 @@ class GradualDriftScenario(BaseScenario):
                     event, user, UserPersona(user["persona"]), ts
                 )
                 self.current_data.append(txn)
+        # Apply intentional shift so pipeline drift check (>= 0.30) triggers retraining.
+        _apply_drift_shift(self.current_data, self.drift_strength, DRIFT_NUMERIC_COLUMNS)
+        logger.info(
+            "Applied drift strength %.2f to current_data (target drift_score >= 0.30)",
+            self.drift_strength,
+        )
         self.results["weeks_simulated"] = weeks
         self.results["reference_data"] = self.reference_data
         self.results["current_data"] = self.current_data
@@ -74,15 +115,19 @@ class GradualDriftScenario(BaseScenario):
         ref = self.results.get("reference_data", [])
         cur = self.results.get("current_data", [])
         if ref and cur:
-            ref_amounts = [t["total_amount"] for t in ref if "total_amount" in t]
-            cur_amounts = [t["total_amount"] for t in cur if "total_amount" in t]
-            if ref_amounts and cur_amounts:
-                ref_avg = sum(ref_amounts) / len(ref_amounts)
-                cur_avg = sum(cur_amounts) / len(cur_amounts)
-                drift = abs(cur_avg - ref_avg) / ref_avg if ref_avg else 0
-                self.results["drift_score_detected"] = min(1.0, drift)
-            else:
-                self.results["drift_score_detected"] = 0.5
+            drift_scores = []
+            for col in DRIFT_NUMERIC_COLUMNS:
+                ref_vals = [r[col] for r in ref if col in r and r[col] is not None]
+                cur_vals = [r[col] for r in cur if col in r and r[col] is not None]
+                if not ref_vals or not cur_vals:
+                    continue
+                ref_mean = sum(ref_vals) / len(ref_vals)
+                cur_mean = sum(cur_vals) / len(cur_vals)
+                denom = ref_mean if ref_mean != 0 else 1
+                drift_scores.append(abs(cur_mean - ref_mean) / denom)
+            self.results["drift_score_detected"] = (
+                min(1.0, sum(drift_scores) / len(drift_scores)) if drift_scores else 0.5
+            )
         else:
             self.results["drift_score_detected"] = 0.5
         self.results["weeks_simulated"] = self.results.get("weeks_simulated", 4)

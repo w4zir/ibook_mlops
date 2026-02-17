@@ -14,6 +14,7 @@ The **Ibook Event Simulator** runs predefined scenarios to stress-test the MLOps
 | **flash-sale** | Mega-event launch, traffic spike, bot traffic | Peak RPS, fraud detection ~90%, latency within SLA |
 | **fraud-attack** | Coordinated fraud (credential stuffing, card testing, scalping) | Fraud recall ≥ 90%, precision ≥ 85% |
 | **gradual-drift** | Seasonal/behavior drift over weeks | Drift score detected, weeks_simulated as configured |
+| **strong-drift** | Strong distribution shift so pipeline triggers model retraining | Drift score ≥ 0.30, retrain trigger |
 | **system-degradation** | Partial failures, circuit breakers, fallback | Error rate ~5%, fallback usage measurable |
 | **black-friday** | Extreme sustained load | Peak RPS, p99 &lt; 200 ms, error rate &lt; 2% |
 | **mix** | Weighted combination of the above | Combined metrics within relaxed thresholds |

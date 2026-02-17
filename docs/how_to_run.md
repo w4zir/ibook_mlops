@@ -139,7 +139,24 @@ docker compose logs -f faust-worker parquet-sink
 
 The **event ticketing simulator** generates realistic traffic (events, users, transactions, fraud patterns) to stress-test the platform under scenarios such as normal traffic, flash sales, fraud attacks, gradual drift, system degradation, and Black Friday. In **realtime mode**, the simulator also produces each transaction to Kafka (`raw.transactions`) so the Faust worker can compute real-time features and the Parquet sink can archive raw events to MinIO.
 
-**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `system-degradation`, `black-friday`, `mix`.
+**Available scenarios:** `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `strong-drift`, `system-degradation`, `black-friday`, `mix`.
+
+#### Drift scenarios (trigger model retraining)
+
+Use these to generate data with an intentional distribution shift so the monitoring pipeline’s drift check (threshold 0.30) fails and model retraining is triggered:
+
+```bash
+# Gradual drift — seasonal/behavior drift over weeks (drift score above threshold)
+python -m simulator.cli run gradual-drift -o reports/gradual-drift.html
+
+# Strong drift — larger shift; use when you want to guarantee the pipeline triggers retraining
+python -m simulator.cli run strong-drift -o reports/strong-drift.html
+
+# Optional: override duration (minutes)
+python -m simulator.cli run strong-drift --duration 5 -o reports/strong-drift-5min.html
+```
+
+After running, the scenario report includes reference vs current data; the drift validator (and thus the **ml_monitoring_pipeline** / **feature_engineering_pipeline** when they compare to a baseline) will see `drift_score >= 0.30` and `passed=False`, so the next run can trigger model training.
 
 #### Run via CLI (from repo root, with venv active)
 
@@ -175,6 +192,8 @@ Requires `pip install -e .` and `make` (e.g. WSL / Git Bash):
 make sim-list
 make sim-run scenario=normal-traffic   # writes reports/normal-traffic-report.html
 make sim-run scenario=flash-sale
+make sim-run scenario=gradual-drift     # drift scenario (triggers retrain threshold)
+make sim-run scenario=strong-drift     # strong drift, guarantees retrain trigger
 make sim-run-all                       # runs all, output to reports/
 make sim-mix                           # mix mode (default 30 min); use duration=10 for 10 min
 make sim-realtime                      # realtime 60s @ 100 rps; use scenario= duration= rps= to override

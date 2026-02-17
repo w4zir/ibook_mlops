@@ -7,6 +7,7 @@ from simulator.scenarios.fraud_attack import FraudAttackScenario
 from simulator.scenarios.gradual_drift import GradualDriftScenario
 from simulator.scenarios.mixed import DEFAULT_MIX, MixedScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
+from simulator.scenarios.strong_drift import StrongDriftScenario
 from simulator.scenarios.system_degradation import SystemDegradationScenario
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "FlashSaleScenario",
     "FraudAttackScenario",
     "GradualDriftScenario",
+    "StrongDriftScenario",
     "SystemDegradationScenario",
     "BlackFridayScenario",
 ]

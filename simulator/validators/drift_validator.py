@@ -33,10 +33,9 @@ class DriftValidator:
             drift_scores.append(abs(cur_mean - ref_mean) / denom)
         drift_score = min(1.0, sum(drift_scores) / len(drift_scores)) if drift_scores else 0
         try:
-            import evidently
-            evidently  # use so lint does not complain
+            import evidently  # noqa: F401
             use_evidently = True
-        except ImportError:
+        except Exception:
             use_evidently = False
         return {
             "passed": drift_score < 0.30,

@@ -15,6 +15,7 @@ from simulator.scenarios.fraud_attack import FraudAttackScenario
 from simulator.scenarios.gradual_drift import GradualDriftScenario
 from simulator.scenarios.mixed import MixedScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
+from simulator.scenarios.strong_drift import StrongDriftScenario
 from simulator.scenarios.system_degradation import SystemDegradationScenario
 
 
@@ -59,6 +60,7 @@ def test_transaction_generator_produces_valid_transactions() -> None:
         FlashSaleScenario,
         FraudAttackScenario,
         GradualDriftScenario,
+        StrongDriftScenario,
         SystemDegradationScenario,
         BlackFridayScenario,
     ],
@@ -148,4 +150,37 @@ def test_mixed_scenario_custom_weights() -> None:
     scenario.run()
     assert len(scenario.results.get("responses", [])) >= 1
 
+
+def test_gradual_drift_scenario_triggers_drift_validator() -> None:
+    """Drift scenarios apply enough shift so DriftValidator reports drift (score >= 0.30)."""
+    from simulator.validators.drift_validator import DriftValidator
+
+    scenario = GradualDriftScenario(duration_minutes=1)
+    scenario.setup()
+    scenario.run()
+    scenario.teardown()
+    ref = scenario.results.get("reference_data", [])
+    cur = scenario.results.get("current_data", [])
+    assert len(ref) >= 1 and len(cur) >= 1
+
+    result = DriftValidator().validate(ref, cur)
+    assert result["drift_score"] >= 0.30, "Drift scenario should produce drift_score >= 0.30 for pipeline retrain trigger"
+    assert result["passed"] is False, "Drift check should fail (passed=False) so pipeline triggers retraining"
+
+
+def test_strong_drift_scenario_triggers_drift_validator() -> None:
+    """Strong drift scenario guarantees drift above threshold."""
+    from simulator.validators.drift_validator import DriftValidator
+
+    scenario = StrongDriftScenario(duration_minutes=1)
+    scenario.setup()
+    scenario.run()
+    scenario.teardown()
+    ref = scenario.results.get("reference_data", [])
+    cur = scenario.results.get("current_data", [])
+    assert len(ref) >= 1 and len(cur) >= 1
+
+    result = DriftValidator().validate(ref, cur)
+    assert result["drift_score"] >= 0.30
+    assert result["passed"] is False
 
