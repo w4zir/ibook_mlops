@@ -2,6 +2,7 @@
 
 from simulator.core.event_generator import EventGenerator
 from simulator.core.fraud_simulator import FraudSimulator
+from simulator.core.kafka_emitter import emit_transactions_to_kafka, prepare_transaction_for_kafka
 from simulator.core.transaction_generator import TransactionGenerator
 from simulator.core.user_generator import UserGenerator
 
@@ -10,4 +11,6 @@ __all__ = [
     "UserGenerator",
     "TransactionGenerator",
     "FraudSimulator",
+    "emit_transactions_to_kafka",
+    "prepare_transaction_for_kafka",
 ]

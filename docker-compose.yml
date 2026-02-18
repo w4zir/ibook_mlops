@@ -137,6 +137,8 @@ services:
       - ./services/airflow/dags:/opt/airflow/dags:ro
       - ./services/airflow/plugins:/opt/airflow/plugins:ro
       - .:/opt/airflow/workspace:ro
+      # Writable data dir so feature_engineering_pipeline can write Feast parquet files into data/processed/feast
+      - ./data:/opt/airflow/workspace/data
     command: >
       bash -c "
       airflow db migrate &&
@@ -171,6 +173,8 @@ services:
       - ./services/airflow/dags:/opt/airflow/dags:ro
       - ./services/airflow/plugins:/opt/airflow/plugins:ro
       - .:/opt/airflow/workspace:ro
+      # Writable data dir so feature_engineering_pipeline can write Feast parquet files into data/processed/feast
+      - ./data:/opt/airflow/workspace/data
     command: ["bash", "-c", "airflow scheduler"]
 
   zookeeper:

@@ -13,8 +13,7 @@ The **Ibook Event Simulator** runs predefined scenarios to stress-test the MLOps
 | **normal-traffic** | Baseline daily operations, 100–500 RPS, ~3% fraud | p99 &lt; 200 ms, error rate &lt; 1% |
 | **flash-sale** | Mega-event launch, traffic spike, bot traffic | Peak RPS, fraud detection ~90%, latency within SLA |
 | **fraud-attack** | Coordinated fraud (credential stuffing, card testing, scalping) | Fraud recall ≥ 90%, precision ≥ 85% |
-| **gradual-drift** | Seasonal/behavior drift over weeks | Drift score detected, weeks_simulated as configured |
-| **strong-drift** | Strong distribution shift so pipeline triggers model retraining | Drift score ≥ 0.30, retrain trigger |
+| **drift** | Configurable drift level (0 = no drift, 1 = max); seed-compatible data | Drift score scales with --drift-level; ≥ 0.30 triggers retrain |
 | **system-degradation** | Partial failures, circuit breakers, fallback | Error rate ~5%, fallback usage measurable |
 | **black-friday** | Extreme sustained load | Peak RPS, p99 &lt; 200 ms, error rate &lt; 2% |
 | **mix** | Weighted combination of the above | Combined metrics within relaxed thresholds |
@@ -183,8 +182,7 @@ Validation uses **10% tolerance** on expected metrics.
 | fraud-attack | fraud_recall | 0.90 | 10% | Too many frauds missed |
 | fraud-attack | fraud_precision | 0.85 | 10% | Too many false blocks |
 | fraud-attack | p99_latency_ms | 200 | 10% | Latency SLA breach |
-| gradual-drift | drift_score_detected | 0.5 | 10% | Drift not detected |
-| gradual-drift | weeks_simulated | 4 | 10% | Time window wrong |
+| drift | drift_score_detected | 0.5 | 15% | Drift level vs expected (use --drift-level) |
 | system-degradation | error_rate | 0.05 | 10% | Error rate out of range |
 | system-degradation | fallback_used_pct | 50 | 10% | Fallback behavior unexpected |
 | black-friday | peak_rps | 5000 | 10% | Load not sustained |

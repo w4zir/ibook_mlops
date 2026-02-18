@@ -4,15 +4,16 @@ from __future__ import annotations
 Airflow DAG: feature engineering pipeline.
 
 - Runs hourly.
-- Reads raw events from MinIO (s3://raw-events/transactions/) and computes
-  user_realtime_fraud_features (same aggregation logic as Faust worker) for
-  offline store and training.
+- Reads raw events from MinIO (s3://raw-events/transactions/) within a
+  configurable time window and computes user_realtime_fraud_features
+  (same aggregation logic as Faust worker) for offline store and training.
 - Uses simple pandas-based aggregation on local synthetic Feast data for
   event-level features when present.
 - Materializes to Feast (healthcheck + user_realtime_fraud_features when data exists).
-- Drift detection and training trigger are stubs.
+- Drift detection: reference = seed-derived features (regenerated each run); target = last 24h from MinIO. Reference is never updated from target.
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -35,15 +36,24 @@ except ImportError:
 
 DAG_ID = "feature_engineering_pipeline"
 DATA_DIR = get_workspace_data_path("processed", "feast")
+FALLBACK_DIR = Path("/opt/airflow/data/processed/feast")
+# Time window (hours) for raw events read from MinIO; env FEATURE_RAW_EVENTS_HOURS.
+DEFAULT_RAW_EVENTS_HOURS = 24
+# Seed reference for drift: env DRIFT_REFERENCE_SEED, DRIFT_REFERENCE_*.
+DEFAULT_DRIFT_REFERENCE_SEED = 42
+DEFAULT_DRIFT_REFERENCE_EVENTS = 50
+DEFAULT_DRIFT_REFERENCE_USERS = 500
+DEFAULT_DRIFT_REFERENCE_TRANSACTIONS = 5000
 logger = logging.getLogger(__name__)
 
 
-def _extract_realtime_events(**_: Any) -> None:
+def _extract_realtime_events(**_: Any) -> dict:
     """
-    Read raw transaction events from MinIO (raw-events bucket), compute
-    per-user aggregates aligned with Faust (user_txn_count_1h, user_txn_amount_1h,
-    user_distinct_events_1h, user_avg_amount_24h), write to user_realtime_features.parquet.
+    Read raw transaction events from MinIO (raw-events bucket) within a
+    configurable time window (FEATURE_RAW_EVENTS_HOURS, default 24), compute
+    per-user aggregates aligned with Faust, write user_realtime_features.parquet.
 
+    Returns run metadata (window_hours, window_end_utc, rows_processed) for XCom.
     If MinIO is unavailable or the bucket is empty, log and skip (no failure).
     """
     import io
@@ -52,12 +62,13 @@ def _extract_realtime_events(**_: Any) -> None:
         import boto3
     except ImportError:
         logger.warning("boto3 not available; skipping MinIO raw-events read.")
-        return
+        return {"window_hours": 0, "window_end_utc": None, "rows_processed": 0}
 
     endpoint = os.environ.get("AWS_S3_ENDPOINT_URL") or os.environ.get("MLFLOW_S3_ENDPOINT_URL") or "http://localhost:9000"
     bucket = os.environ.get("RAW_EVENTS_BUCKET", "raw-events")
     access_key = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
     secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    window_hours = int(os.environ.get("FEATURE_RAW_EVENTS_HOURS", str(DEFAULT_RAW_EVENTS_HOURS)))
 
     try:
         client = boto3.client(
@@ -77,7 +88,7 @@ def _extract_realtime_events(**_: Any) -> None:
                     keys.append(k)
         if not keys:
             logger.info("No Parquet files under s3://%s/%s; skipping user_realtime_features.", bucket, prefix)
-            return
+            return {"window_hours": window_hours, "window_end_utc": datetime.now(timezone.utc).isoformat(), "rows_processed": 0}
 
         dfs = []
         for key in keys:
@@ -88,17 +99,27 @@ def _extract_realtime_events(**_: Any) -> None:
         raw = pd.concat(dfs, ignore_index=True)
     except Exception as e:
         logger.warning("Failed to read raw events from MinIO (bucket=%s): %s; skipping.", bucket, e)
-        return
+        return {"window_hours": window_hours, "window_end_utc": datetime.now(timezone.utc).isoformat(), "rows_processed": 0}
 
     if raw.empty:
         logger.info("Raw events DataFrame is empty; skipping user_realtime_features.")
-        return
+        return {"window_hours": window_hours, "window_end_utc": datetime.now(timezone.utc).isoformat(), "rows_processed": 0}
+
+    # Filter to recent window if timestamp column present
+    if "timestamp" in raw.columns and window_hours > 0:
+        try:
+            raw["_ts"] = pd.to_datetime(raw["timestamp"], utc=True, errors="coerce")
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+            raw = raw.loc[raw["_ts"] >= cutoff].drop(columns=["_ts"])
+        except Exception as e:
+            logger.warning("Could not filter by timestamp window: %s; using full data.", e)
+    rows_processed = len(raw)
 
     # Require columns from simulator transaction schema
     for col in ("user_id", "event_id", "total_amount"):
         if col not in raw.columns:
             logger.warning("Raw events missing column %s; skipping user_realtime_features.", col)
-            return
+            return {"window_hours": window_hours, "window_end_utc": datetime.now(timezone.utc).isoformat(), "rows_processed": 0}
 
     # Same aggregations as Faust worker (offline/historical version)
     agg = raw.groupby("user_id").agg(
@@ -111,16 +132,21 @@ def _extract_realtime_events(**_: Any) -> None:
     agg["ingested_at"] = pd.Timestamp.utcnow()
 
     out_path = DATA_DIR / "user_realtime_features.parquet"
-    fallback_dir = Path("/opt/airflow/data/processed/feast")
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         agg.to_parquet(out_path, index=False)
-        logger.info("Wrote user_realtime_features to %s (%d rows).", out_path, len(agg))
+        logger.info("Wrote user_realtime_features to %s (%d rows, window_hours=%s).", out_path, len(agg), window_hours)
     except OSError as write_err:
-        fallback_dir.mkdir(parents=True, exist_ok=True)
-        fallback_path = fallback_dir / "user_realtime_features.parquet"
+        FALLBACK_DIR.mkdir(parents=True, exist_ok=True)
+        fallback_path = FALLBACK_DIR / "user_realtime_features.parquet"
         agg.to_parquet(fallback_path, index=False)
         logger.info("Wrote user_realtime_features to fallback %s (%d rows).", fallback_path, len(agg))
+
+    return {
+        "window_hours": window_hours,
+        "window_end_utc": datetime.now(timezone.utc).isoformat(),
+        "rows_processed": rows_processed,
+    }
 
 
 def _compute_batch_features(**_: Any) -> None:
@@ -201,9 +227,8 @@ def _compute_batch_features(**_: Any) -> None:
             logger.info("Wrote aggregated event features to %s", out_path)
         except OSError as write_err:
             # Workspace is often mounted read-only in Docker; write to writable path.
-            fallback_dir = Path("/opt/airflow/data/processed/feast")
-            fallback_dir.mkdir(parents=True, exist_ok=True)
-            fallback_path = fallback_dir / "event_aggregates.parquet"
+            FALLBACK_DIR.mkdir(parents=True, exist_ok=True)
+            fallback_path = FALLBACK_DIR / "event_aggregates.parquet"
             logger.warning(
                 "Could not write to %s (%s); writing to fallback %s",
                 out_path,
@@ -231,7 +256,7 @@ def _validate_features(**_: Any) -> None:
     get stuck in retries.
     """
     agg_path = DATA_DIR / "event_aggregates.parquet"
-    fallback_agg_path = Path("/opt/airflow/data/processed/feast/event_aggregates.parquet")
+    fallback_agg_path = FALLBACK_DIR / "event_aggregates.parquet"
     if agg_path.exists():
         path_to_validate = agg_path
     elif fallback_agg_path.exists():
@@ -272,7 +297,7 @@ def _materialize_to_feast(**_: Any) -> None:
     )
 
     user_realtime_path = DATA_DIR / "user_realtime_features.parquet"
-    fallback_path = Path("/opt/airflow/data/processed/feast/user_realtime_features.parquet")
+    fallback_path = FALLBACK_DIR / "user_realtime_features.parquet"
     path_to_use = user_realtime_path if user_realtime_path.exists() else (fallback_path if fallback_path.exists() else None)
     if path_to_use and "user_realtime_fraud_features" in info["feature_view_names"]:
         try:
@@ -287,29 +312,132 @@ def _materialize_to_feast(**_: Any) -> None:
             logging.warning("Materialize user_realtime_fraud_features failed (non-fatal): %s", e)
 
 
+def _get_feature_paths() -> tuple[Path, Path]:
+    """Return (current_path, drift_summary_path); use DATA_DIR or FALLBACK_DIR."""
+    current = DATA_DIR / "user_realtime_features.parquet"
+    summary = DATA_DIR / "drift_summary.json"
+    if not current.exists():
+        current = FALLBACK_DIR / "user_realtime_features.parquet"
+        summary = FALLBACK_DIR / "drift_summary.json"
+    return current, summary
+
+
+def _build_seed_reference_features() -> pd.DataFrame | None:
+    """
+    Regenerate reference features from deterministic seed transactions each run.
+    Returns DataFrame with columns user_txn_count_1h, user_txn_amount_1h,
+    user_distinct_events_1h, user_avg_amount_24h (same schema as target features).
+    """
+    try:
+        from common.seed_transactions import generate_seed_transactions
+    except ImportError as e:
+        logger.warning("common.seed_transactions not available for drift reference: %s", e)
+        return None
+    seed = int(os.environ.get("DRIFT_REFERENCE_SEED", str(DEFAULT_DRIFT_REFERENCE_SEED)))
+    n_events = int(os.environ.get("DRIFT_REFERENCE_EVENTS", str(DEFAULT_DRIFT_REFERENCE_EVENTS)))
+    n_users = int(os.environ.get("DRIFT_REFERENCE_USERS", str(DEFAULT_DRIFT_REFERENCE_USERS)))
+    n_transactions = int(os.environ.get("DRIFT_REFERENCE_TRANSACTIONS", str(DEFAULT_DRIFT_REFERENCE_TRANSACTIONS)))
+    txns = generate_seed_transactions(
+        seed=seed,
+        n_events=n_events,
+        n_users=n_users,
+        n_transactions=n_transactions,
+    )
+    if not txns:
+        return None
+    raw = pd.DataFrame(txns)
+    agg = raw.groupby("user_id").agg(
+        user_txn_count_1h=("user_id", "count"),
+        user_txn_amount_1h=("total_amount", "sum"),
+        user_distinct_events_1h=("event_id", "nunique"),
+    ).reset_index()
+    agg["user_avg_amount_24h"] = agg["user_txn_amount_1h"] / agg["user_txn_count_1h"].clip(lower=1)
+    return agg
+
+
 def _check_for_drift(**_: Any) -> bool:
     """
-    Stub for drift detection.
-
-    A future phase can wire this into Evidently or other monitoring utilities.
-    For now we simply return False (no drift) and log a message.
+    Compare current user_realtime_features (last 24h from MinIO) to seed-derived
+    reference (regenerated each run). Persist drift summary JSON. Reference is
+    never updated from target.
     """
-    logging.info("Drift detection stub executed; returning no-drift for Phase 5.")
-    return False
+    from common.monitoring_utils import generate_drift_report
+
+    window_hours = int(os.environ.get("FEATURE_RAW_EVENTS_HOURS", str(DEFAULT_RAW_EVENTS_HOURS)))
+    current_path, summary_path = _get_feature_paths()
+    if not current_path.exists():
+        logger.info("No current user_realtime_features at %s; skipping drift check.", current_path)
+        return False
+
+    current_df = pd.read_parquet(current_path)
+    numeric_cols = [c for c in current_df.columns if c in (
+        "user_txn_count_1h", "user_txn_amount_1h", "user_distinct_events_1h", "user_avg_amount_24h"
+    )]
+    if not numeric_cols:
+        logger.warning("No numeric feature columns for drift; skipping.")
+        return False
+    current_sub = current_df[numeric_cols]
+
+    reference_df = _build_seed_reference_features()
+    if reference_df is None or reference_df.empty:
+        logger.warning("Could not build seed reference features; skipping drift check.")
+        summary = {
+            "drift_score": 0.0,
+            "drift_detected": False,
+            "column_scores": {},
+            "run_ts": datetime.now(timezone.utc).isoformat(),
+            "reference_source": "seed_regenerated",
+            "target_window_hours": window_hours,
+            "note": "reference build failed or empty",
+        }
+        try:
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Could not write drift summary: %s", e)
+        return False
+
+    ref_sub = reference_df[numeric_cols].reindex(columns=numeric_cols).dropna(how="all")
+    if ref_sub.empty or current_sub.empty:
+        logger.info("Reference or current feature subset empty; skipping drift.")
+        return False
+
+    result = generate_drift_report(ref_sub, current_sub, include_html=False)
+    summary = {
+        "drift_score": result.drift_score,
+        "drift_detected": result.drift_detected,
+        "column_scores": result.column_scores,
+        "run_ts": datetime.now(timezone.utc).isoformat(),
+        "reference_source": "seed_regenerated",
+        "target_window_hours": window_hours,
+    }
+    try:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Could not write drift summary: %s", e)
+
+    logger.info(
+        "Drift check: score=%.4f detected=%s (reference=seed, target=last %sh)",
+        result.drift_score,
+        result.drift_detected,
+        window_hours,
+    )
+    return result.drift_detected
 
 
 def _maybe_trigger_training(**context: Any) -> None:
     """
     Log whether model retraining would be triggered.
 
-    We read the drift flag from XCom if present; otherwise we default to
-    \"no drift\". This keeps the implementation simple while preserving the
-    intent of conditional retraining.
+    Reads the drift flag from check_for_drift (XCom). When drift is detected,
+    the ml_monitoring_pipeline (or this DAG in a future variant) can trigger
+    model_training_pipeline; here we only log the intent.
     """
     ti = context["ti"]
     drift_flag = ti.xcom_pull(task_ids="check_for_drift")
     if drift_flag:
-        logging.info("Drift detected (stub); would trigger model_training_pipeline DAG.")
+        logging.info("Drift detected; would trigger model_training_pipeline DAG.")
     else:
         logging.info("No drift detected; skipping retraining trigger.")
 

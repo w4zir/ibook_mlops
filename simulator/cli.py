@@ -6,11 +6,10 @@ from pathlib import Path
 import click
 
 from simulator.scenarios.black_friday import BlackFridayScenario
+from simulator.scenarios.drift import DriftScenario
 from simulator.scenarios.flash_sale import FlashSaleScenario
 from simulator.scenarios.fraud_attack import FraudAttackScenario
-from simulator.scenarios.gradual_drift import GradualDriftScenario
 from simulator.scenarios.mixed import MixedScenario
-from simulator.scenarios.strong_drift import StrongDriftScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
 from simulator.scenarios.system_degradation import SystemDegradationScenario
 
@@ -21,8 +20,7 @@ SCENARIOS = {
     "flash-sale": FlashSaleScenario,
     "normal-traffic": NormalTrafficScenario,
     "fraud-attack": FraudAttackScenario,
-    "gradual-drift": GradualDriftScenario,
-    "strong-drift": StrongDriftScenario,
+    "drift": DriftScenario,
     "system-degradation": SystemDegradationScenario,
     "black-friday": BlackFridayScenario,
     "mix": MixedScenario,
@@ -47,16 +45,57 @@ def list_scenarios() -> None:
         click.echo(f"  Duration: {instance.duration_minutes} minutes")
 
 
+def _make_scenario(scenario_name: str, drift_level: float | None, drift_seed: int | None,
+                   drift_events: int | None, drift_users: int | None, drift_transactions: int | None,
+                   drift_window_hours: int | None = None):
+    """Build scenario instance; for drift, pass CLI drift options."""
+    scenario_class = SCENARIOS[scenario_name]
+    if scenario_name == "drift":
+        kwargs = {}
+        if drift_level is not None:
+            kwargs["drift_level"] = drift_level
+        if drift_seed is not None:
+            kwargs["seed"] = drift_seed
+        if drift_events is not None:
+            kwargs["n_events"] = drift_events
+        if drift_users is not None:
+            kwargs["n_users"] = drift_users
+        if drift_transactions is not None:
+            kwargs["n_transactions"] = drift_transactions
+        if drift_window_hours is not None:
+            kwargs["window_hours"] = drift_window_hours
+        return scenario_class(**kwargs)
+    return scenario_class()
+
+
 @cli.command()
 @click.argument("scenario_name", type=click.Choice(list(SCENARIOS.keys())))
 @click.option("--output", "-o", default="report.html", help="Output report file")
 @click.option("--dry-run", is_flag=True, help="Validate setup without running")
 @click.option("--duration", "-d", type=int, default=None, help="Override duration in minutes")
-def run(scenario_name: str, output: str, dry_run: bool, duration: int | None) -> None:
-    """Run a specific scenario."""
+@click.option("--drift-level", type=float, default=None, help="[drift only] Drift level 0-1 (0=no drift, 1=max). Default 0.5")
+@click.option("--drift-seed", type=int, default=None, help="[drift only] Random seed for reproducible data. Default 42")
+@click.option("--drift-events", type=int, default=None, help="[drift only] Number of events. Default 50")
+@click.option("--drift-users", type=int, default=None, help="[drift only] Number of users. Default 500")
+@click.option("--drift-transactions", type=int, default=None, help="[drift only] Number of transactions. Default 2000")
+@click.option("--drift-window-hours", type=int, default=None, help="[drift only] Timestamp window hours (e.g. 24). Default 24 to match feature pipeline.")
+def run(
+    scenario_name: str,
+    output: str,
+    dry_run: bool,
+    duration: int | None,
+    drift_level: float | None,
+    drift_seed: int | None,
+    drift_events: int | None,
+    drift_users: int | None,
+    drift_transactions: int | None,
+    drift_window_hours: int | None,
+) -> None:
+    """Run a specific scenario. For 'drift', use --drift-level 0-1 and optional --drift-* options."""
     click.echo(f"\nRunning scenario: {scenario_name}")
-    scenario_class = SCENARIOS[scenario_name]
-    scenario = scenario_class()
+    scenario = _make_scenario(
+        scenario_name, drift_level, drift_seed, drift_events, drift_users, drift_transactions, drift_window_hours
+    )
     if dry_run:
         click.echo("DRY RUN: Setup only")
         scenario.setup()
@@ -65,6 +104,10 @@ def run(scenario_name: str, output: str, dry_run: bool, duration: int | None) ->
     with click.progressbar(length=100, label="Running") as bar:
         results = scenario.execute(duration_override_minutes=duration)
         bar.update(100)
+    if scenario_name == "drift" and isinstance(scenario, DriftScenario):
+        score = scenario.results.get("drift_score_detected")
+        if score is not None:
+            click.echo(f"Drift score detected: {score:.4f}")
     click.echo("\nResults:")
     click.echo("=" * 50)
     if results["passed"]:

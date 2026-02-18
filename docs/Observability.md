@@ -131,8 +131,8 @@ flowchart LR
 Use this flow to see when drift is detected and when a retraining would be triggered.
 
 1. **Generate drift-like behavior (optional)**  
-   Run the simulator `gradual-drift` scenario to simulate changing behavior:  
-   `python -m simulator.cli run gradual-drift -o reports/gradual-drift.html`
+   Run the simulator `drift` scenario to simulate changing behavior:  
+   `python -m simulator.cli run drift --drift-level 0.7 -o reports/drift.html`
 
 2. **Run the monitoring pipeline**  
    In Airflow (http://localhost:8080), unpause and trigger the **ml_monitoring_pipeline** DAG. It will:

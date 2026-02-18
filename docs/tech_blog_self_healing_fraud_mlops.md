@@ -228,7 +228,7 @@ On top of these primitives we define **scenarios**:
 - `normal-traffic`: baseline operations with modest fraud rates.  
 - `flash-sale`: sudden spikes in request rate.  
 - `fraud-attack`: coordinated credential stuffing, card testing, bot scalping.  
-- `gradual-drift`: seasonal behavior changes.  
+- `drift`: configurable drift level (0–1); seed-compatible data.  
 - `system-degradation`: partial outages and slow dependencies.  
 - `black-friday`: extreme loads across the stack.  
 - `mix`: weighted combination of scenarios.  

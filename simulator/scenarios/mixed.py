@@ -10,7 +10,6 @@ from simulator.scenarios.base_scenario import BaseScenario
 from simulator.scenarios.black_friday import BlackFridayScenario
 from simulator.scenarios.flash_sale import FlashSaleScenario
 from simulator.scenarios.fraud_attack import FraudAttackScenario
-from simulator.scenarios.gradual_drift import GradualDriftScenario
 from simulator.scenarios.normal_traffic import NormalTrafficScenario
 from simulator.scenarios.system_degradation import SystemDegradationScenario
 

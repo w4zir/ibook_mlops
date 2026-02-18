@@ -67,3 +67,19 @@ def send_raw_transaction(event: Dict[str, Any]) -> None:
     except Exception as exc:  # pragma: no cover - best-effort logging
         logger.warning("Failed to send event to Kafka (topic=%s): %s", topic, exc)
 
+
+def flush_producer(timeout_sec: float = 10.0) -> None:
+    """
+    Flush outstanding producer messages. Use after batch emission so messages
+    are delivered before the process exits (e.g. simulator scenario run).
+    """
+    global _producer
+    if _producer is None:
+        return
+    try:
+        remaining = _producer.flush(timeout=timeout_sec)
+        if remaining > 0:
+            logger.warning("Kafka producer flush timed out; %d messages may be lost", remaining)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Kafka producer flush failed: %s", exc)
+

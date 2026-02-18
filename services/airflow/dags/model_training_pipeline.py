@@ -46,14 +46,22 @@ def _bentoml_base_url() -> str:
     ).rstrip("/")
 
 
-def _build_training_dataset(**_: Any) -> pd.DataFrame:
+def _build_training_dataset(**context: Any) -> pd.DataFrame:
     """
     Build a tiny synthetic user-metrics dataset suitable for fraud training.
 
     In a later phase this will be wired to Feast via `common.feature_utils`.
     For now we generate a deterministic DataFrame that mimics the schema of
-    the Feast-backed user metrics.
+    the Feast-backed user metrics. When triggered by ml_monitoring_pipeline
+    with drift context, logs conf for observability.
     """
+    dag_run = context.get("dag_run")
+    if dag_run and getattr(dag_run, "conf", None):
+        logging.info(
+            "Model training run triggered with conf: drift_score=%s triggered_by=%s",
+            dag_run.conf.get("drift_score"),
+            dag_run.conf.get("triggered_by"),
+        )
     rng = np.random.default_rng(seed=42)
     n_rows = 512
 

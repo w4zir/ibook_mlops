@@ -384,7 +384,7 @@ FUNCTION execute():
 | `normal-traffic` | Baseline operations (~3% fraud) |
 | `flash-sale` | Mega-event launch (10K+ RPS) |
 | `fraud-attack` | Coordinated fraud (credential stuffing, card testing, bot scalping) |
-| `gradual-drift` | Seasonal behavior changes |
+| `drift` | Configurable drift level (0–1); seed-compatible data |
 | `system-degradation` | Partial service failures |
 | `black-friday` | Extreme load |
 | `mix` | Weighted combination of scenarios |

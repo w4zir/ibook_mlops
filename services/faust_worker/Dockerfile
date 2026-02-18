@@ -6,7 +6,8 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     "aiokafka>=0.10.0,<0.11.0" \
     "faust-streaming[rocksdb]>=0.11.0" \
-    "feast[redis]>=0.40.0" \
+    "feast[redis,duckdb]>=0.40.0" \
+    "duckdb>=0.10.0" \
     pandas
 
 # Copy minimal surface: feature repo for Feast, faust worker, common config
