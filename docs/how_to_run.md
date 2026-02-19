@@ -1,5 +1,7 @@
 ## How to run
 
+*Last updated: February 2026.*
+
 This repo covers the full MLOps platform: local service stack, Feast feature store, MLflow, BentoML model serving, Airflow DAGs, monitoring (Prometheus/Grafana/Evidently), and the **event ticketing simulator** for stress and scenario testing.
 
 ---

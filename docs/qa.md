@@ -1,5 +1,7 @@
 ## Q&A
 
+*Last updated: February 2026.*
+
 ### Q: Does the system currently detect model drift and trigger training if it drifts?
 
 **A:** The system computes a drift score and a `needs_retrain` flag (for example in the `ml_monitoring_pipeline` DAG), and logs that it *would* trigger the `model_training_pipeline` when drift exceeds the 0.3 threshold. However, the actual trigger is currently a stub (logging only); it does not yet use `TriggerDagRunOperator` or otherwise automatically start retraining.

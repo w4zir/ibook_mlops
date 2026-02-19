@@ -186,7 +186,7 @@ FUNCTION train_fraud_model(df, target_column, n_trials=5, test_size=0.2):
 
 ## 6. Model Serving (BentoML)
 
-### 5.1 Fraud Detection Service (port 7001)
+### 6.1 Fraud Detection Service (port 7001)
 
 **Flow:** HTTP batch request → build entity rows (user_id, event_id) → fetch Feast online features (e.g. user_purchase_behavior: lifetime_purchases, fraud_risk_score) → run XGBoost inference → return fraud_score and is_fraud (threshold 0.5).
 
@@ -203,7 +203,7 @@ ON POST /predict WITH FraudBatchRequest:
 
 **Model loading:** Resolves latest model from MLflow registry (by stage or version), then loads the XGBoost artifact.
 
-### 5.2 Dynamic Pricing Service (port 7002)
+### 6.2 Dynamic Pricing Service (port 7002)
 
 **Algorithm:** Thompson Sampling multi-armed bandit with Beta(α, β) per arm. Arms in code: `baseline`, `aggressive` (and optionally fallback for circuit breaker).
 

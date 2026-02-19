@@ -1,5 +1,7 @@
 # Simulator Testing Guide
 
+*Last updated: February 2026.*
+
 How to test simulator scenarios using CLI, pytest, Docker Compose, Makefile, and Locust, with expected results and validation criteria.
 
 ---

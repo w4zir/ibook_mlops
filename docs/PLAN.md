@@ -790,11 +790,16 @@ Create comprehensive README.md with:
 ```
 
 **Files to Create:**
-- [ ] `README.md`
-- [ ] `docs/architecture.md`
-- [ ] `docs/local-development.md`
-- [ ] `docs/production-deployment.md`
-- [ ] `docs/troubleshooting.md`
+- [x] `README.md` (project overview, quick start, doc links)
+- [x] `docs/how_it_works.md` — Architecture, algorithms, data flows
+- [x] `docs/how_to_run.md` — Run instructions and troubleshooting
+- [x] `docs/Observability.md` — Metrics, dashboards, health checks
+- [x] `docs/SIMULATOR.md` — Simulator design and usage
+- [x] `docs/simulator_testing.md` — Scenario testing guide
+- [x] `docs/qa.md` — Q&A
+- [x] `docs/tech_blog_self_healing_fraud_mlops.md` — Tech blog: self-healing fraud MLOps
+- [ ] `docs/architecture.md` (optional standalone)
+- [ ] `docs/runbooks/` (operational runbooks)
 
 #### 10.2 Runbooks
 

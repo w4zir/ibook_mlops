@@ -45,3 +45,5 @@ Scenarios: `normal-traffic`, `flash-sale`, `fraud-attack`, `gradual-drift`, `sys
 - [docs/SIMULATOR.md](docs/SIMULATOR.md) — Simulator design and usage
 - [docs/simulator_testing.md](docs/simulator_testing.md) — Scenario testing guide
 - [docs/qa.md](docs/qa.md) — Q&A
+- [docs/PLAN.md](docs/PLAN.md) — Implementation plan and status
+- [docs/tech_blog_self_healing_fraud_mlops.md](docs/tech_blog_self_healing_fraud_mlops.md) — Tech blog: self-healing fraud MLOps

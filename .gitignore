@@ -47,8 +47,3 @@ data/models/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/models/.gitkeep
-
-
-docs\tech_blog_self_healing_fraud_mlops.md
-
-tech_blog_self_healing_fraud_mlops.md

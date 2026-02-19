@@ -1,6 +1,8 @@
 # Event Ticketing Simulator - Test Scenarios for MLOps Platform
 ## Comprehensive Testing & Stress Testing System
 
+*Last updated: February 2026.*
+
 ---
 
 ## 🎯 Overview
@@ -21,10 +23,10 @@ Implemented today: core generators (event, user, transaction, fraud), scenarios 
 
 ## 📁 Project Structure
 
-Current layout (add to existing `ibook-mlops/` structure):
+Current layout (add to existing repo root; directory may be named `ibook_ai_ops` or `ibook-mlops`):
 
 ```
-ibook-mlops/
+<repo-root>/
 ├── simulator/
 │   ├── __init__.py
 │   ├── config.py                    # Simulator configuration
