@@ -7,7 +7,7 @@
     "user_avg_amount_24h": 1.0
   },
   "source": "feature_pipeline",
-  "run_ts": "2026-02-19T05:34:34.149528Z",
+  "run_ts": "2026-02-19T05:53:37.100702Z",
   "reference_source": "seed_regenerated",
   "target_window_hours": 24
 }

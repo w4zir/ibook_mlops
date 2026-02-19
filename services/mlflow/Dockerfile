@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Install MLflow and minimal DB/storage drivers.
 RUN pip install --no-cache-dir \
-    mlflow==2.10.2 \
+    "mlflow>=2.11,<2.12" \
     psycopg2-binary==2.9.9 \
     boto3==1.34.34
 
